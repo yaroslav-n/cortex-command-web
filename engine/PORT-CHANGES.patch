@@ -186,7 +186,7 @@ diff -ruP --exclude=*.o original/Source/Activities/BaseEditor.h port/Source/Acti
  	private:
 diff -ruP --exclude=*.o original/Source/Activities/GameActivity.cpp port/Source/Activities/GameActivity.cpp
 --- original/Source/Activities/GameActivity.cpp	2026-09-24 10:48:58
-+++ port/Source/Activities/GameActivity.cpp	2026-09-24 04:48:57
++++ port/Source/Activities/GameActivity.cpp	2026-09-24 19:54:22
 @@ -70,7 +70,6 @@
  		m_ReadyToStart[player] = false;
  		m_PurchaseOverride[player].clear();
@@ -204,7 +204,20 @@ diff -ruP --exclude=*.o original/Source/Activities/GameActivity.cpp port/Source/
  	}
  
  	for (int team = Teams::TeamOne; team < Teams::MaxTeamCount; ++team) {
-@@ -2472,16 +2469,4 @@
+@@ -1029,6 +1026,12 @@
+ 		if (allReady) {
+ 			// START the game!
+ 			m_ActivityState = ActivityState::Running;
++			// What was placed while building can no longer be taken back out (SceneEditorGUI::RemoveInGamePlacement).
++			for (int player = Players::PlayerOne; player < Players::MaxPlayerCount; ++player) {
++				if (m_pEditorGUI[player]) {
++					m_pEditorGUI[player]->ForgetInGamePlacements();
++				}
++			}
+ 			// Re-enable the AI's if we are done editing
+ 			DisableAIs(false);
+ 			InitAIs();
+@@ -2472,16 +2475,4 @@
  		rotate_sprite(pTargetBitmap, pArrowBitmap, x - halfWidth, y, itofix(-128));
  		g_FrameMan.GetLargeFont()->DrawAligned(&allegroBitmap, x, y + pArrowBitmap->h + textSpace, m_Description, GUIFont::Centre, GUIFont::Top);
  	}
@@ -719,6 +732,38 @@ diff -ruP --exclude=*.o original/Source/Entities/SceneLayer.h port/Source/Entiti
  
  		/// Wraps or bounds a position coordinate if it is out of bounds of the SceneLayer, depending on the wrap settings of this SceneLayer.
  		/// @param pos The Vector coordinates of the position to wrap.
+diff -ruP --exclude=*.o original/Source/Entities/TerrainObject.cpp port/Source/Entities/TerrainObject.cpp
+--- original/Source/Entities/TerrainObject.cpp	2026-09-24 10:48:58
++++ port/Source/Entities/TerrainObject.cpp	2026-09-24 19:52:14
+@@ -230,6 +230,15 @@
+ 					DrawTexture(m_BGColorBitmap, drawPos.at(i).GetFloorIntX(), drawPos.at(i).GetFloorIntY(), {255, 255, 255, g_FrameMan.GetCurrentAlpha()});
+ 				}
+ 				break;
++			// Its shape in white, as MOSprite draws for g_DrawWhite: in-game building highlights what it is about to remove.
++			case DrawMode::g_DrawWhite:
++				if (HasBGColorBitmap()) {
++					draw_character_ex(targetBitmap, m_BGColorBitmap, drawPos.at(i).GetFloorIntX(), drawPos.at(i).GetFloorIntY(), g_WhiteColor, -1);
++				}
++				if (HasFGColorBitmap()) {
++					draw_character_ex(targetBitmap, m_FGColorBitmap, drawPos.at(i).GetFloorIntX(), drawPos.at(i).GetFloorIntY(), g_WhiteColor, -1);
++				}
++				break;
+ 			default:
+ 				break;
+ 		}
+diff -ruP --exclude=*.o original/Source/Entities/TerrainObject.h port/Source/Entities/TerrainObject.h
+--- original/Source/Entities/TerrainObject.h	2026-09-24 10:48:58
++++ port/Source/Entities/TerrainObject.h	2026-09-24 19:52:14
+@@ -133,6 +133,9 @@
+ 		std::vector<SceneObject::SOPlacer> m_ChildObjects; //!< The objects that are placed along with this TerrainObject on the Scene.
+ 
+ 	private:
++		// In-game building draws a placed TerrainObject again, without its child objects, after taking back an earlier one it covered.
++		friend class SceneEditorGUI;
++
+ 		/// Draws this TerrainObject's graphical and material representations to the specified SLTerrain's respective layers.
+ 		/// @param terrain The SLTerrain to draw this TerrainObject to. Ownership is NOT transferred!
+ 		void DrawToTerrain(SLTerrain* terrain);
 diff -ruP --exclude=*.o original/Source/GUI/GUIControlManager.cpp port/Source/GUI/GUIControlManager.cpp
 --- original/Source/GUI/GUIControlManager.cpp	2026-09-24 10:48:58
 +++ port/Source/GUI/GUIControlManager.cpp	2026-09-24 05:58:20
@@ -4152,14 +4197,53 @@ diff -ruP --exclude=*.o original/Source/Menus/SaveLoadMenuGUI.cpp port/Source/Me
  #else
 diff -ruP --exclude=*.o original/Source/Menus/SceneEditorGUI.cpp port/Source/Menus/SceneEditorGUI.cpp
 --- original/Source/Menus/SceneEditorGUI.cpp	2026-09-24 10:48:59
-+++ port/Source/Menus/SceneEditorGUI.cpp	2026-09-24 09:47:02
++++ port/Source/Menus/SceneEditorGUI.cpp	2026-09-24 20:18:19
 @@ -1,4 +1,5 @@
  #include "SceneEditorGUI.h"
 +#include "System.h"
  
  #include "CameraMan.h"
  #include "FrameMan.h"
-@@ -747,7 +748,10 @@
+@@ -29,6 +30,7 @@
+ #include "tracy/TracyOpenGL.hpp"
+ #include "BigTexture.h"
+ 
++#include <algorithm>
+ #include <array>
+ #include <string>
+ 
+@@ -80,6 +82,8 @@
+ 	m_BrainSkyPathCost = 0;
+ 	m_RequireClearPathToOrbit = false;
+ 	m_PathRequest.reset();
++	m_InGamePlacements.clear();
++	m_InGamePlacementToBlink = -1;
+ }
+ 
+ int SceneEditorGUI::Create(Controller* pController, FeatureSets featureSet, int whichModuleSpace, int nativeTechModule, float foreignCostMult) {
+@@ -181,6 +185,13 @@
+ 	m_PieMenu = std::unique_ptr<PieMenu>(dynamic_cast<PieMenu*>(g_PresetMan.GetEntityPreset("PieMenu", pieMenuName)->Clone()));
+ 	// m_PieMenu->Create();
+ 	m_PieMenu->SetMenuController(m_pController);
++	// The in-game menu's "(Re)Move Object" slice ships disabled: the original cannot take anything placed in-game back
++	// out of the scene. This can, during the build phase (m_InGamePlacements).
++	if (m_FeatureSet == FeatureSets::INGAMEEDIT) {
++		if (PieSlice* removeSlice = m_PieMenu->GetFirstPieSliceByType(PieSliceType::EditorRemove)) {
++			removeSlice->SetEnabled(true);
++		}
++	}
+ }
+ 
+ void SceneEditorGUI::SetPosOnScreen(int newPosX, int newPosY) {
+@@ -289,6 +300,7 @@
+ 
+ 	m_EditMade = false;
+ 	m_pObjectToBlink = 0;
++	m_InGamePlacementToBlink = -1;
+ 	// Which set of placed objects in the scene we're editing
+ 	int editedSet = m_FeatureSet == ONLOADEDIT ? Scene::PLACEONLOAD : (m_FeatureSet == AIPLANEDIT ? Scene::AIPLAN : Scene::BLUEPRINT);
+ 
+@@ -747,7 +759,10 @@
  			// Placing governor brain, which actually just puts it back into the resident brain roster
  			if (m_PreviousMode == INSTALLINGBRAIN) {
  				// Force our path request to complete so we know whether we can place or not
@@ -4171,6 +4255,373 @@ diff -ruP --exclude=*.o original/Source/Menus/SceneEditorGUI.cpp port/Source/Men
  
  				// Only place if the brain has a clear path to the sky!
  				if (m_BrainSkyPathCost <= MAXBRAINPATHCOST || !m_RequireClearPathToOrbit) {
+@@ -890,7 +905,11 @@
+ 							// Deduct the cost from team funds
+ 							g_ActivityMan.GetActivity()->ChangeTeamFunds(-m_pCurrentObject->GetTotalValue(m_NativeTechModule, m_ForeignCostMult), m_pController->GetTeam());
+ 
+-							pTO->PlaceOnTerrain(g_SceneMan.GetTerrain());
++							// pTO->PlaceOnTerrain(g_SceneMan.GetTerrain());
++							// Placed as that does, and recorded so that it can be taken back out; the placement owns it.
++							InGamePlacement& placement = m_InGamePlacements.emplace_back();
++							placement.m_Cost = m_pCurrentObject->GetTotalValue(m_NativeTechModule, m_ForeignCostMult);
++							StampInGame(pTO, placement);
+ 							g_SceneMan.GetTerrain()->CleanAir();
+ 
+ 							Vector terrainObjectPos = pTO->GetPos() + pTO->GetBitmapOffset();
+@@ -903,7 +922,7 @@
+ 								m_ModeChanged = true;
+ 							}
+ 
+-							delete pPlacedClone;
++							// delete pPlacedClone;
+ 							pPlacedClone = 0;
+ 							g_GUISound.PlacementThud()->Play(m_pController->GetPlayer());
+ 							g_GUISound.PlacementGravel()->Play(m_pController->GetPlayer());
+@@ -921,6 +940,7 @@
+ 								Actor* pActor = pDep->CreateDeployedActor(pDep->GetPlacedByPlayer(), cost);
+ 								if (pActor) {
+ 									value = cost;
++									RecordInGamePlacement(pActor, value);
+ 									g_MovableMan.AddActor(pActor);
+ 								}
+ 								// Just a simple Device in the Deployment?
+@@ -929,9 +949,10 @@
+ 									// Get the Item/Device and add to scene, passing ownership
+ 									SceneObject* pObject = pDep->CreateDeployedObject(pDep->GetPlacedByPlayer(), cost);
+ 									MovableObject* pMO = dynamic_cast<MovableObject*>(pObject);
+-									if (pMO)
++									if (pMO) {
++										RecordInGamePlacement(pMO, value);
+ 										g_MovableMan.AddMO(pMO);
+-									else {
++									} else {
+ 										delete pObject;
+ 										pObject = 0;
+ 									}
+@@ -949,6 +970,7 @@
+ 							Actor* pActor = dynamic_cast<Actor*>(pPlacedClone);
+ 							HeldDevice* pDevice = 0;
+ 							if (pActor) {
++								RecordInGamePlacement(pActor, value);
+ 								g_MovableMan.AddActor(pActor);
+ 								m_EditMade = true;
+ 							} else if (pDevice = dynamic_cast<HeldDevice*>(pPlacedClone)) {
+@@ -981,10 +1003,15 @@
+ 										pNearestAHuman->FlashWhite(150);
+ 										toPlace = false;
+ 										m_EditMade = true;
++										// It goes with the actor if the actor is taken back out.
++										if (InGamePlacement* actorPlacement = FindInGamePlacement(pNearestAHuman)) {
++											actorPlacement->m_Cost += value;
++										}
+ 									}
+ 								}
+ 
+ 								if (toPlace) {
++									RecordInGamePlacement(pDevice, value);
+ 									g_MovableMan.AddItem(pDevice);
+ 									m_EditMade = true;
+ 								}
+@@ -992,8 +1019,10 @@
+ 							// Something else
+ 							else {
+ 								MovableObject* pObj = dynamic_cast<MovableObject*>(pPlacedClone);
+-								if (pObj)
++								if (pObj) {
++									RecordInGamePlacement(pObj, value);
+ 									g_MovableMan.AddParticle(pObj);
++								}
+ 								m_EditMade = true;
+ 							}
+ 						}
+@@ -1092,8 +1121,22 @@
+ 			}
+ 			g_FrameMan.SetScreenText("Click and hold to select an object - release to DELETE it", g_ActivityMan.GetActivity()->ScreenOfPlayer(m_pController->GetPlayer()));
+ 
++			// In-game building places straight into the scene, not into a set of placed objects: what it can
++			// take back out is what the player placed in this build phase.
++			if (m_FeatureSet == INGAMEEDIT) {
++				if (m_pController->IsState(PRIMARY_ACTION) && !m_pPicker->IsVisible()) {
++					m_InGamePlacementToBlink = PickInGamePlacement(m_CursorPos);
++				} else if (m_pController->IsState(RELEASE_PRIMARY)) {
++					if (int picked = PickInGamePlacement(m_CursorPos); picked >= 0) {
++						RemoveInGamePlacement(picked);
++						m_EditMade = true;
++					} else {
++						g_GUISound.UserErrorSound()->Play(m_pController->GetPlayer());
++					}
++				}
++			}
+ 			// When primary is held down, pick object and show which one will be nuked if released
+-			if (m_pController->IsState(PRIMARY_ACTION) && !m_pPicker->IsVisible()) {
++			else if (m_pController->IsState(PRIMARY_ACTION) && !m_pPicker->IsVisible()) {
+ 				m_pObjectToBlink = g_SceneMan.GetScene()->PickPlacedObject(editedSet, m_CursorPos);
+ 			} else if (m_pController->IsState(RELEASE_PRIMARY)) {
+ 				if (g_SceneMan.GetScene()->PickPlacedObject(editedSet, m_CursorPos, &m_ObjectListOrder)) {
+@@ -1334,6 +1377,20 @@
+ 		rlZDepth(c_DefaultDrawDepth);
+ 	}
+ 
++	// In-game building: what would be removed if the button were released now blinks white.
++	if (m_FeatureSet == INGAMEEDIT && m_InGamePlacementToBlink >= 0 && m_InGamePlacementToBlink < static_cast<int>(m_InGamePlacements.size()) && m_BlinkTimer.AlternateReal(333)) {
++		const InGamePlacement& placement = m_InGamePlacements[m_InGamePlacementToBlink];
++		for (const InGamePlacement::Stamp& stamp: placement.m_Stamps) {
++			stamp.m_Piece->Draw(m_DrawBitmap.get(), targetPos, g_DrawWhite);
++		}
++		for (long uniqueID: placement.m_Movables) {
++			const MovableObject* movable = g_MovableMan.FindObjectByUniqueID(uniqueID);
++			if (movable && g_MovableMan.ValidMO(movable)) {
++				movable->Draw(m_DrawBitmap.get(), targetPos, g_DrawWhite, true);
++			}
++		}
++	}
++
+ 	m_pPicker->Draw(pTargetBitmap);
+ 
+ 	m_DrawTexture->Update(Box(Vector(), m_DrawTexture->m_Width, m_DrawTexture->m_Height));
+@@ -1452,4 +1509,157 @@
+ 		return false;
+ 	}
+ 	return true;
++}
++
++// The terrain layers TerrainObject::DrawToTerrain draws into, in the order of InGamePlacement::Stamp::m_Before.
++static std::array<BITMAP*, 3> InGameTerrainLayers(SLTerrain* terrain) {
++	return {terrain->GetMaterialBitmap(), terrain->GetBGColorBitmap(), terrain->GetFGColorBitmap()};
++}
++
++// Copies a box of a terrain layer, starting at a corner on the scene, into a copy of it or back, wrapping as
++// the terrain does: the pixels TerrainObject::DrawToTerrain can draw for an object with its bitmaps there.
++static void CopyInGameTerrainBox(SLTerrain* terrain, BITMAP* layer, BITMAP* copy, int cornerX, int cornerY, bool intoCopy) {
++	for (int y = 0; y < copy->h; ++y) {
++		int layerY = cornerY + y;
++		if (terrain->WrapsY()) {
++			layerY = ((layerY % layer->h) + layer->h) % layer->h;
++		} else if (layerY < 0 || layerY >= layer->h) {
++			continue;
++		}
++		for (int x = 0; x < copy->w; ++x) {
++			int layerX = cornerX + x;
++			if (terrain->WrapsX()) {
++				layerX = ((layerX % layer->w) + layer->w) % layer->w;
++			} else if (layerX < 0 || layerX >= layer->w) {
++				continue;
++			}
++			if (intoCopy) {
++				_putpixel(copy, x, y, _getpixel(layer, layerX, layerY));
++			} else {
++				_putpixel(layer, layerX, layerY, _getpixel(copy, x, y));
++			}
++		}
++	}
++}
++
++void SceneEditorGUI::ForgetInGamePlacements() {
++	m_InGamePlacements.clear();
++	m_InGamePlacementToBlink = -1;
++}
++
++void SceneEditorGUI::StampInGame(TerrainObject* terrainObject, InGamePlacement& placement) {
++	SLTerrain* terrain = g_SceneMan.GetTerrain();
++	const std::array<BITMAP*, 3> layers = InGameTerrainLayers(terrain);
++
++	InGamePlacement::Stamp stamp;
++	stamp.m_Piece.reset(terrainObject);
++	const Vector corner = terrainObject->GetPos() + terrainObject->GetBitmapOffset();
++	stamp.m_CornerX = corner.GetFloorIntX();
++	stamp.m_CornerY = corner.GetFloorIntY();
++	for (size_t layer = 0; layer < layers.size(); ++layer) {
++		stamp.m_Before[layer].reset(create_bitmap_ex(8, std::max(1, terrainObject->GetBitmapWidth()), std::max(1, terrainObject->GetBitmapHeight())));
++		CopyInGameTerrainBox(terrain, layers[layer], stamp.m_Before[layer].get(), stamp.m_CornerX, stamp.m_CornerY, true);
++	}
++	placement.m_Stamps.push_back(std::move(stamp));
++
++	// What TerrainObject::PlaceOnTerrain does, with SceneMan::AddSceneObject for each child object.
++	terrainObject->DrawToTerrain(terrain);
++	terrainObject->SetTeam(terrainObject->GetTeam());
++	for (const SceneObject::SOPlacer& childObject: terrainObject->GetChildObjects()) {
++		SceneObject* child = childObject.GetPlacedCopy(terrainObject);
++		if (MovableObject* childMovable = dynamic_cast<MovableObject*>(child)) {
++			placement.m_Movables.push_back(childMovable->GetUniqueID());
++			g_MovableMan.AddMO(childMovable);
++		} else if (TerrainObject* childTerrainObject = dynamic_cast<TerrainObject*>(child)) {
++			StampInGame(childTerrainObject, placement);
++			Box airBox(childTerrainObject->GetPos() + childTerrainObject->GetBitmapOffset(), static_cast<float>(childTerrainObject->GetBitmapWidth()), static_cast<float>(childTerrainObject->GetBitmapHeight()));
++			terrain->CleanAirBox(airBox, g_SceneMan.GetScene()->WrapsX(), g_SceneMan.GetScene()->WrapsY());
++		} else {
++			delete child;
++		}
++	}
++}
++
++void SceneEditorGUI::RecordInGamePlacement(const MovableObject* movable, float cost) {
++	InGamePlacement& placement = m_InGamePlacements.emplace_back();
++	placement.m_Movables.push_back(movable->GetUniqueID());
++	placement.m_Cost = cost;
++}
++
++SceneEditorGUI::InGamePlacement* SceneEditorGUI::FindInGamePlacement(const MovableObject* movable) {
++	for (InGamePlacement& placement: m_InGamePlacements) {
++		if (std::find(placement.m_Movables.begin(), placement.m_Movables.end(), movable->GetUniqueID()) != placement.m_Movables.end()) {
++			return &placement;
++		}
++	}
++	return nullptr;
++}
++
++int SceneEditorGUI::PickInGamePlacement(const Vector& scenePoint) const {
++	Vector point = scenePoint;
++	// Actors and items stand in front of the terrain, so they are found first; an actor also within 20 pixels,
++	// as Scene::PickPlacedActorInRange finds one.
++	for (int index = static_cast<int>(m_InGamePlacements.size()) - 1; index >= 0; --index) {
++		for (long uniqueID: m_InGamePlacements[index].m_Movables) {
++			MovableObject* movable = g_MovableMan.FindObjectByUniqueID(uniqueID);
++			if (!movable || !g_MovableMan.ValidMO(movable)) {
++				continue;
++			}
++			if (movable->IsOnScenePoint(point) || (dynamic_cast<Actor*>(movable) && g_SceneMan.ShortestDistance(movable->GetPos(), point, true).MagnitudeIsLessThan(20.0F))) {
++				return index;
++			}
++		}
++	}
++	for (int index = static_cast<int>(m_InGamePlacements.size()) - 1; index >= 0; --index) {
++		for (const InGamePlacement::Stamp& stamp: m_InGamePlacements[index].m_Stamps) {
++			if (stamp.m_Piece->IsOnScenePoint(point)) {
++				return index;
++			}
++		}
++	}
++	return -1;
++}
++
++void SceneEditorGUI::RemoveInGamePlacement(int index) {
++	SLTerrain* terrain = g_SceneMan.GetTerrain();
++	const std::array<BITMAP*, 3> layers = InGameTerrainLayers(terrain);
++	const bool stamped = !m_InGamePlacements[index].m_Stamps.empty();
++
++	// Later placements may cover this one. Take the terrain back to before it was placed, newest stamp first...
++	if (stamped) {
++		for (int later = static_cast<int>(m_InGamePlacements.size()) - 1; later >= index; --later) {
++			std::vector<InGamePlacement::Stamp>& stamps = m_InGamePlacements[later].m_Stamps;
++			for (auto stamp = stamps.rbegin(); stamp != stamps.rend(); ++stamp) {
++				for (size_t layer = 0; layer < layers.size(); ++layer) {
++					CopyInGameTerrainBox(terrain, layers[layer], stamp->m_Before[layer].get(), stamp->m_CornerX, stamp->m_CornerY, false);
++				}
++				terrain->AddUpdatedMaterialArea(Box(Vector(static_cast<float>(stamp->m_CornerX), static_cast<float>(stamp->m_CornerY)), static_cast<float>(stamp->m_Before[0]->w), static_cast<float>(stamp->m_Before[0]->h)));
++			}
++		}
++	}
++
++	InGamePlacement& placement = m_InGamePlacements[index];
++	for (long uniqueID: placement.m_Movables) {
++		MovableObject* movable = g_MovableMan.FindObjectByUniqueID(uniqueID);
++		if (movable && g_MovableMan.ValidMO(movable)) {
++			movable->SetToDelete(true);
++		}
++	}
++	g_ActivityMan.GetActivity()->ChangeTeamFunds(placement.m_Cost, m_pController->GetTeam());
++	m_InGamePlacements.erase(m_InGamePlacements.begin() + index);
++
++	// ...then draw the later ones again, in order, as they were placed.
++	if (stamped) {
++		for (size_t later = index; later < m_InGamePlacements.size(); ++later) {
++			for (InGamePlacement::Stamp& stamp: m_InGamePlacements[later].m_Stamps) {
++				for (size_t layer = 0; layer < layers.size(); ++layer) {
++					CopyInGameTerrainBox(terrain, layers[layer], stamp.m_Before[layer].get(), stamp.m_CornerX, stamp.m_CornerY, true);
++				}
++				stamp.m_Piece->DrawToTerrain(terrain);
++				// The editor cleans the air after placing, SceneMan::AddSceneObject after each child.
++				Box airBox(Vector(static_cast<float>(stamp.m_CornerX), static_cast<float>(stamp.m_CornerY)), static_cast<float>(stamp.m_Before[0]->w), static_cast<float>(stamp.m_Before[0]->h));
++				terrain->CleanAirBox(airBox, g_SceneMan.GetScene()->WrapsX(), g_SceneMan.GetScene()->WrapsY());
++			}
++		}
++	}
+ }
+diff -ruP --exclude=*.o original/Source/Menus/SceneEditorGUI.h port/Source/Menus/SceneEditorGUI.h
+--- original/Source/Menus/SceneEditorGUI.h	2026-09-24 10:48:59
++++ port/Source/Menus/SceneEditorGUI.h	2026-09-24 20:18:19
+@@ -12,14 +12,18 @@
+ #include "PieSlice.h"
+ #include "PathFinder.h"
+ 
++#include <array>
+ #include <memory>
+ #include <list>
++#include <vector>
+ 
+ struct BITMAP;
+ 
+ namespace RTE {
+ 
+ 	class SceneObject;
++	class MovableObject;
++	class TerrainObject;
+ 	class ObjectPickerGUI;
+ 	class PieMenu;
+ 	struct BigTexture;
+@@ -141,6 +145,10 @@
+ 		/// @return Whether any edit was made.
+ 		bool EditMade() const { return m_EditMade; }
+ 
++		/// Forgets what was placed while building in-game, which can then no longer be taken back out.
++		/// Called when the build phase ends and the battle starts.
++		void ForgetInGamePlacements();
++
+ 		/// Checks whether the resident brain is currently placed into a valid
+ 		/// location in this scene, based on whether there is a clear path to the
+ 		/// sky above it. This forces the editor into place brain mode with the
+@@ -249,6 +257,51 @@
+ 		};
+ 		std::unique_ptr<BITMAP, BitmapDeleter> m_DrawBitmap;
+ 		std::unique_ptr<BigTexture> m_DrawTexture;
++
++		/// Something the player put into the scene while building in-game (INGAMEEDIT), kept so that it can be
++		/// taken back out during the same build phase. In-game building places straight into the scene: the
++		/// original offers no way to remove anything (its "(Re)Move Object" slice is disabled).
++		struct InGamePlacement {
++			/// A TerrainObject drawn onto the terrain, and the terrain it covered just before.
++			struct Stamp {
++				std::unique_ptr<TerrainObject> m_Piece; //!< The object, kept to draw it again and to find it under the cursor.
++				int m_CornerX = 0; //!< Where its bitmaps start on the scene.
++				int m_CornerY = 0;
++				std::array<std::unique_ptr<BITMAP, BitmapDeleter>, 3> m_Before; //!< The terrain's material, background and foreground under it.
++			};
++			std::vector<Stamp> m_Stamps; //!< A placed TerrainObject and its child TerrainObjects, in the order they were drawn.
++			std::vector<long> m_Movables; //!< Unique IDs of what went into MovableMan: a placed actor or item, or a TerrainObject's child objects (doors, turrets).
++			float m_Cost = 0; //!< What the team paid for it, and for items given to it since.
++		};
++		std::vector<InGamePlacement> m_InGamePlacements; //!< What the player has placed in this build phase, oldest first.
++		int m_InGamePlacementToBlink; //!< The placement to highlight while choosing what to remove, or -1.
++
++		/// Draws a TerrainObject onto the terrain and places its child objects, as TerrainObject::PlaceOnTerrain does,
++		/// recording in a placement the terrain it covers and what goes into MovableMan. Takes ownership of it.
++		/// @param terrainObject The TerrainObject to place.
++		/// @param placement The placement to record it in.
++		void StampInGame(TerrainObject* terrainObject, InGamePlacement& placement);
++
++		/// Records an actor or item the player put into MovableMan while building in-game.
++		/// @param movable The actor or item, just added to MovableMan.
++		/// @param cost What the team paid for it.
++		void RecordInGamePlacement(const MovableObject* movable, float cost);
++
++		/// The in-game placement that put an actor or item into the scene.
++		/// @param movable The actor or item.
++		/// @return The placement, or nullptr if the player did not place it in this build phase.
++		InGamePlacement* FindInGamePlacement(const MovableObject* movable);
++
++		/// The most recent in-game placement with something under a point: its actors and items first, then what
++		/// it drew onto the terrain.
++		/// @param scenePoint The point on the scene.
++		/// @return Its index in m_InGamePlacements, or -1.
++		int PickInGamePlacement(const Vector& scenePoint) const;
++
++		/// Takes an in-game placement back out of the scene: its actors and items, and the terrain it covered,
++		/// restored as it was, with any later placements drawn again over it. Refunds what it cost.
++		/// @param index Its index in m_InGamePlacements.
++		void RemoveInGamePlacement(int index);
+ 
+ 		/// Private member variable and method declarations
+ 	private:
 diff -ruP --exclude=*.o original/Source/Menus/SettingsVideoGUI.cpp port/Source/Menus/SettingsVideoGUI.cpp
 --- original/Source/Menus/SettingsVideoGUI.cpp	2026-09-24 10:48:59
 +++ port/Source/Menus/SettingsVideoGUI.cpp	2026-09-23 20:53:15

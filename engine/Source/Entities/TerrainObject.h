@@ -133,6 +133,9 @@ namespace RTE {
 		std::vector<SceneObject::SOPlacer> m_ChildObjects; //!< The objects that are placed along with this TerrainObject on the Scene.
 
 	private:
+		// In-game building draws a placed TerrainObject again, without its child objects, after taking back an earlier one it covered.
+		friend class SceneEditorGUI;
+
 		/// Draws this TerrainObject's graphical and material representations to the specified SLTerrain's respective layers.
 		/// @param terrain The SLTerrain to draw this TerrainObject to. Ownership is NOT transferred!
 		void DrawToTerrain(SLTerrain* terrain);

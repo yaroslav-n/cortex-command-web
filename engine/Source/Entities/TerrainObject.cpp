@@ -230,6 +230,15 @@ void TerrainObject::Draw(BITMAP* targetBitmap, const Vector& targetPos, DrawMode
 					DrawTexture(m_BGColorBitmap, drawPos.at(i).GetFloorIntX(), drawPos.at(i).GetFloorIntY(), {255, 255, 255, g_FrameMan.GetCurrentAlpha()});
 				}
 				break;
+			// Its shape in white, as MOSprite draws for g_DrawWhite: in-game building highlights what it is about to remove.
+			case DrawMode::g_DrawWhite:
+				if (HasBGColorBitmap()) {
+					draw_character_ex(targetBitmap, m_BGColorBitmap, drawPos.at(i).GetFloorIntX(), drawPos.at(i).GetFloorIntY(), g_WhiteColor, -1);
+				}
+				if (HasFGColorBitmap()) {
+					draw_character_ex(targetBitmap, m_FGColorBitmap, drawPos.at(i).GetFloorIntX(), drawPos.at(i).GetFloorIntY(), g_WhiteColor, -1);
+				}
+				break;
 			default:
 				break;
 		}
