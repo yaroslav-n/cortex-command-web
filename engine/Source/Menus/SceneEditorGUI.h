@@ -12,14 +12,18 @@
 #include "PieSlice.h"
 #include "PathFinder.h"
 
+#include <array>
 #include <memory>
 #include <list>
+#include <vector>
 
 struct BITMAP;
 
 namespace RTE {
 
 	class SceneObject;
+	class MovableObject;
+	class TerrainObject;
 	class ObjectPickerGUI;
 	class PieMenu;
 	struct BigTexture;
@@ -141,6 +145,10 @@ namespace RTE {
 		/// @return Whether any edit was made.
 		bool EditMade() const { return m_EditMade; }
 
+		/// Forgets what was placed while building in-game, which can then no longer be taken back out.
+		/// Called when the build phase ends and the battle starts.
+		void ForgetInGamePlacements();
+
 		/// Checks whether the resident brain is currently placed into a valid
 		/// location in this scene, based on whether there is a clear path to the
 		/// sky above it. This forces the editor into place brain mode with the
@@ -249,6 +257,51 @@ namespace RTE {
 		};
 		std::unique_ptr<BITMAP, BitmapDeleter> m_DrawBitmap;
 		std::unique_ptr<BigTexture> m_DrawTexture;
+
+		/// Something the player put into the scene while building in-game (INGAMEEDIT), kept so that it can be
+		/// taken back out during the same build phase. In-game building places straight into the scene: the
+		/// original offers no way to remove anything (its "(Re)Move Object" slice is disabled).
+		struct InGamePlacement {
+			/// A TerrainObject drawn onto the terrain, and the terrain it covered just before.
+			struct Stamp {
+				std::unique_ptr<TerrainObject> m_Piece; //!< The object, kept to draw it again and to find it under the cursor.
+				int m_CornerX = 0; //!< Where its bitmaps start on the scene.
+				int m_CornerY = 0;
+				std::array<std::unique_ptr<BITMAP, BitmapDeleter>, 3> m_Before; //!< The terrain's material, background and foreground under it.
+			};
+			std::vector<Stamp> m_Stamps; //!< A placed TerrainObject and its child TerrainObjects, in the order they were drawn.
+			std::vector<long> m_Movables; //!< Unique IDs of what went into MovableMan: a placed actor or item, or a TerrainObject's child objects (doors, turrets).
+			float m_Cost = 0; //!< What the team paid for it, and for items given to it since.
+		};
+		std::vector<InGamePlacement> m_InGamePlacements; //!< What the player has placed in this build phase, oldest first.
+		int m_InGamePlacementToBlink; //!< The placement to highlight while choosing what to remove, or -1.
+
+		/// Draws a TerrainObject onto the terrain and places its child objects, as TerrainObject::PlaceOnTerrain does,
+		/// recording in a placement the terrain it covers and what goes into MovableMan. Takes ownership of it.
+		/// @param terrainObject The TerrainObject to place.
+		/// @param placement The placement to record it in.
+		void StampInGame(TerrainObject* terrainObject, InGamePlacement& placement);
+
+		/// Records an actor or item the player put into MovableMan while building in-game.
+		/// @param movable The actor or item, just added to MovableMan.
+		/// @param cost What the team paid for it.
+		void RecordInGamePlacement(const MovableObject* movable, float cost);
+
+		/// The in-game placement that put an actor or item into the scene.
+		/// @param movable The actor or item.
+		/// @return The placement, or nullptr if the player did not place it in this build phase.
+		InGamePlacement* FindInGamePlacement(const MovableObject* movable);
+
+		/// The most recent in-game placement with something under a point: its actors and items first, then what
+		/// it drew onto the terrain.
+		/// @param scenePoint The point on the scene.
+		/// @return Its index in m_InGamePlacements, or -1.
+		int PickInGamePlacement(const Vector& scenePoint) const;
+
+		/// Takes an in-game placement back out of the scene: its actors and items, and the terrain it covered,
+		/// restored as it was, with any later placements drawn again over it. Refunds what it cost.
+		/// @param index Its index in m_InGamePlacements.
+		void RemoveInGamePlacement(int index);
 
 		/// Private member variable and method declarations
 	private:

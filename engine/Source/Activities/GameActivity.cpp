@@ -1026,6 +1026,12 @@ void GameActivity::UpdateEditing() {
 		if (allReady) {
 			// START the game!
 			m_ActivityState = ActivityState::Running;
+			// What was placed while building can no longer be taken back out (SceneEditorGUI::RemoveInGamePlacement).
+			for (int player = Players::PlayerOne; player < Players::MaxPlayerCount; ++player) {
+				if (m_pEditorGUI[player]) {
+					m_pEditorGUI[player]->ForgetInGamePlacements();
+				}
+			}
 			// Re-enable the AI's if we are done editing
 			DisableAIs(false);
 			InitAIs();

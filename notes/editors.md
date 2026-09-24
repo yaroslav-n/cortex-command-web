@@ -1,15 +1,15 @@
 # Editors
 
-Updated 2026-09-22.
+Updated 2026-09-24.
 
 Entry points: `engine/Source/Activities/SceneEditor.cpp` (activity level),
 `engine/Source/Menus/SceneEditorGUI.cpp` (placement),
 `engine/Source/Managers/PresetMan.cpp` (`GetFullModulePath`, userdata
 modules), `runtime/include/BrowserEditorSaveCheck.h`.
 
-The Scene Editor is the only editor that has been exercised in the browser. The
-Actor, Gib, Area and Assembly editors compile and are reachable from the menu but
-have never been used.
+The Scene Editor, Conquest's base design and in-game building (Skirmish Defense's
+build phase) have been exercised in the browser. The Actor, Gib, Area and Assembly
+editors compile and are reachable from the menu but have never been used.
 
 ## Two state machines
 
@@ -30,6 +30,49 @@ The GUI has four modes: `ONLOADEDIT`, `BLUEPRINTEDIT`, `AIPLANEDIT` and
 AI-plan modes also draw the existing objects as context. Cursor positioning uses
 scene bounds and camera targeting, and the held actor is disabled and inactive
 while being edited.
+
+## Building in-game, and taking things back out
+
+Activities with a build phase — Skirmish Defense, Survival, and any other
+`GameActivity` that starts in `Editing` — use the same GUI in `INGAMEEDIT` mode,
+which places straight into the scene: a module is drawn onto the terrain's three
+layers (`TerrainObject::PlaceOnTerrain`) and its copy deleted, a unit or item goes
+into `MovableMan`, and the team pays at once. The original offers no way back: the
+in-game pie menu's "(Re)Move Object" slice is `Enabled = 0` in
+`Base.rte/GUIs/PieMenus/PieMenus.ini`, and the remove mode only searches the
+blueprint list, which in-game building never fills.
+
+The port enables that slice (`SceneEditorGUI::SetFeatureSet`) and keeps a record of
+each placement in the current build phase (`m_InGamePlacements`):
+
+- a module is stamped by `StampInGame`, which does what `PlaceOnTerrain` and
+  `SceneMan::AddSceneObject` do for it and its child objects — a door frame's door
+  actor, a turret, a ladder's pieces — but first copies the terrain under each
+  piece it draws (material, background and foreground, wrapping as the terrain
+  does), and records the unique IDs of the child actors and items;
+- a unit, an item or a deployment records the unique ID of what it put into
+  `MovableMan`; an item handed to a unit placed in this phase adds its cost to that
+  unit's record, so they are refunded together.
+
+In remove mode, holding the button over one of those blinks it white (units through
+their `g_DrawWhite`; `TerrainObject::Draw` gained the same mode) and releasing takes
+it out: its actors and items are deleted, its cost refunded, and the terrain is
+restored. Later placements may have been drawn over it, so every stamp from the
+newest down to this one is undone in reverse, and the later ones are copied and
+drawn again (`RemoveInGamePlacement`). Actors and items are picked before modules,
+newest first; an actor also within 20 px, as the blueprint editor does.
+
+The records are dropped when the battle starts (`GameActivity::UpdateEditing`, the
+switch to `Running`), so a later build phase — `DebugFunctions.lua` can re-enter one —
+never restores terrain copied before a battle. What cannot be taken back: items
+handed to the brain or to units not placed in this phase, and anything placed
+before the phase began.
+
+Checked on Skirmish Defense (Maginot Mission): a Green Dummy removed (1955 → 2000 oz);
+two overlapping Closed Tombs over the bunker's edge, then the lower one and the upper
+one removed — funds back to 2000 and the material under them hashing the same as
+before (2124521404 over 161×141 px), the picture showing the dirt and the bunker
+wall again; two Door A removed with their door actors (12 → 10 `ADoor`s).
 
 ## The drawing surface
 
