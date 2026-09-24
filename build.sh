@@ -22,7 +22,7 @@ while [ $# -gt 0 ]; do
 done
 CONFIGURE="-DCORTEX_WEB_DIAGNOSTICS=$DIAGNOSTICS -DCORTEX_WORKER=$WORKER -DCORTEX_DIST_DIR=$DIST_DIR"
 EMSDK=${EMSDK:-"$ROOT/toolchains/emsdk"}
-if [ ! -f "$EMSDK/emsdk_env.sh" ]; then
+if [ ! -x "$EMSDK/emsdk" ]; then
   echo "No Emscripten SDK at $EMSDK; run tools/setup-toolchains.sh first." >&2
   exit 1
 fi
@@ -31,7 +31,13 @@ if [ "$(uname)" = Darwin ] && [ -d /Library/Developer/CommandLineTools ]; then
   export DEVELOPER_DIR=${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}
 fi
 [ -d "$ROOT/toolchains/python/bin" ] && export PATH="$ROOT/toolchains/python/bin:$PATH"
-. "$EMSDK/emsdk_env.sh" > /dev/null 2>&1
+# What emsdk_env.sh sets up, asked of emsdk directly: that script can only find its own
+# directory under bash, zsh or ksh, and /bin/sh is dash on Debian and Ubuntu.
+eval "$(EMSDK_BASH=1 EMSDK_QUIET=1 "$EMSDK/emsdk" construct_env)"
+if ! command -v emcmake > /dev/null 2>&1; then
+  echo "The Emscripten SDK at $EMSDK provides no emcmake; run tools/setup-toolchains.sh again." >&2
+  exit 1
+fi
 # shellcheck disable=SC2086
 emcmake cmake -S "$ROOT" -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release $CONFIGURE
 cmake --build "$BUILD_DIR" -j 8 "$@"
