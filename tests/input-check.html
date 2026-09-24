@@ -1,0 +1,5 @@
+<!doctype html><title>Browser input event diagnostic</title><h1>Input event diagnostic</h1><canvas id="canvas" width="600" height="200" tabindex="0" style="background:#ddd"></canvas><pre id="events"></pre><script>
+const events=document.getElementById('events'),canvas=document.getElementById('canvas');
+for(const type of ['keydown','keyup','beforeinput','input'])canvas.addEventListener(type,e=>{events.textContent+=JSON.stringify({type:e.type,key:e.key,code:e.code,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey,meta:e.metaKey,data:e.data})+'\n';if(type==='keydown')e.preventDefault();});
+canvas.focus();
+</script>

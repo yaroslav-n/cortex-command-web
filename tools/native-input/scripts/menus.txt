@@ -1,0 +1,17 @@
+# Main menu, the Conquest notice and the New Campaign dialog, at 864x558 x1.5
+# (window 1296x837). Coordinates are window points.
+wait 15000
+focus
+move 20 20
+wait 3000
+key F12
+wait 1500
+click 648 139
+wait 4000
+key F12
+wait 1500
+click 648 290
+wait 5000
+key F12
+wait 1500
+quit

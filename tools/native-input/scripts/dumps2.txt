@@ -1,0 +1,14 @@
+# In a running mission: F12, then RAlt+W (world dump), then the console's messages.
+wait 25000
+focus
+move 20 20
+wait 1000
+key F12
+wait 3000
+key RAlt+W
+wait 10000
+key `
+wait 2000
+key F12
+wait 3000
+quit

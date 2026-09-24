@@ -1,0 +1,17 @@
+Exploration|First Signs
+Dummy Assault|Dummy Assault
+Bunker Breach|Zekarra Mining Outpost
+Brain vs Brain|Fredeleig Bunkers
+Decision Day|Decision Day
+Maginot Defence|Maginot Mission
+Harvester|Ketanot Hills
+One-Man Army (Diggers Only)|Fredeleig Plains
+One-Man Army (Zero-G)|Zero-G Battle
+Signal Hunt|Unexplored Cave
+Skirmish Defense|Ketanot Hills
+Wave Defense|Ketanot Hills
+Survival|Ketanot Hills
+One-Man Army|Ketanot Hills
+One-Man Army (Diggers, 0-G)|Zero-G Battle
+Massacre|Ketanot Hills
+Keepie Uppie|Ketanot Hills

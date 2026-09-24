@@ -1,0 +1,50 @@
+# Tutorial: the camera offset over time, printed from the Lua console.
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 208
+wait 4000
+click 648 397
+wait 9000
+key `
+wait 1000
+text T=Timer()
+wait 200
+key Return
+wait 1000
+text print(math.floor(T.ElapsedRealTimeMS)..'|'..math.floor(T.ElapsedSimTimeMS)..'|'..CameraMan:GetOffset(0).X)
+wait 200
+key Return
+wait 2500
+text print(math.floor(T.ElapsedRealTimeMS)..'|'..math.floor(T.ElapsedSimTimeMS)..'|'..CameraMan:GetOffset(0).X)
+wait 200
+key Return
+wait 2500
+text print(math.floor(T.ElapsedRealTimeMS)..'|'..math.floor(T.ElapsedSimTimeMS)..'|'..CameraMan:GetOffset(0).X)
+wait 200
+key Return
+wait 2500
+text print(math.floor(T.ElapsedRealTimeMS)..'|'..math.floor(T.ElapsedSimTimeMS)..'|'..CameraMan:GetOffset(0).X)
+wait 200
+key Return
+wait 2500
+text print(math.floor(T.ElapsedRealTimeMS)..'|'..math.floor(T.ElapsedSimTimeMS)..'|'..CameraMan:GetOffset(0).X)
+wait 200
+key Return
+wait 2500
+text print(math.floor(T.ElapsedRealTimeMS)..'|'..math.floor(T.ElapsedSimTimeMS)..'|'..CameraMan:GetOffset(0).X)
+wait 200
+key Return
+wait 2500
+text print(math.floor(T.ElapsedRealTimeMS)..'|'..math.floor(T.ElapsedSimTimeMS)..'|'..CameraMan:GetOffset(0).X)
+wait 200
+key Return
+wait 2500
+text print(math.floor(T.ElapsedRealTimeMS)..'|'..math.floor(T.ElapsedSimTimeMS)..'|'..CameraMan:GetOffset(0).X)
+wait 200
+key Return
+wait 2500
+key F12
+wait 1500
+quit

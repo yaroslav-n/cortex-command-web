@@ -1,0 +1,24 @@
+# Game Editors -> Scene Editor -> Create New. 864x558 x1.5; window points.
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 358
+wait 3000
+click 648 231
+wait 8000
+key F12
+wait 1000
+click 722 432
+wait 4000
+key F12
+wait 1500
+click 572 534
+wait 10000
+key F12
+wait 1500
+move 400 300
+wait 2000
+key F12
+wait 1500
+quit

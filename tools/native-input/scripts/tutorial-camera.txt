@@ -1,0 +1,47 @@
+# Fresh session: Conquest -> Play Tutorial; after it settles, print the camera and
+# the controlled actor's view from the Lua console, and screenshot it.
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 208
+wait 4000
+click 648 397
+wait 30000
+key `
+wait 1500
+text A=ActivityMan:GetActivity():GetControlledActor(0)
+wait 300
+key Return
+wait 1200
+text print(A.PresetName)
+wait 300
+key Return
+wait 1200
+text print(A.Pos.X..','..A.Pos.Y)
+wait 300
+key Return
+wait 1200
+text print(A.ViewPoint.X..','..A.ViewPoint.Y)
+wait 300
+key Return
+wait 1200
+text print(A:GetAimAngle(false))
+wait 300
+key Return
+wait 1200
+text print(CameraMan:GetScrollTarget(0).X..','..CameraMan:GetScrollTarget(0).Y)
+wait 300
+key Return
+wait 1200
+text print(CameraMan:GetOffset(0).X..','..CameraMan:GetOffset(0).Y)
+wait 300
+key Return
+wait 1200
+text print(UInputMan:GetMousePos().X..','..UInputMan:GetMousePos().Y)
+wait 300
+key Return
+wait 1200
+key F12
+wait 1500
+quit

@@ -1,0 +1,9 @@
+#include <fmod/fmod.hpp>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
+static FILE* dest; static unsigned frames=0;
+static void check(FMOD_RESULT r){if(r){fprintf(stderr,"FMOD error %d\n",r);exit(1);}}
+static FMOD_RESULT F_CALLBACK capture(FMOD_DSP_STATE*, float* in,float* out,unsigned n,int channels,int* outchannels){memcpy(out,in,n*channels*sizeof(float));fwrite(in,sizeof(float),n*channels,dest);frames+=n;return FMOD_OK;}
+int main(int argc,char** argv){if(argc!=3){fprintf(stderr,"usage: native_filter_probe cutoff output.f32\n");return 2;}float hz=atof(argv[1]);dest=fopen(argv[2],"wb");if(!dest){perror(argv[2]);return 2;}FMOD::System* s;check(FMOD::System_Create(&s));check(s->setOutput(FMOD_OUTPUTTYPE_NOSOUND_NRT));check(s->setSoftwareFormat(48000,FMOD_SPEAKERMODE_STEREO,0));check(s->setDSPBufferSize(512,4));check(s->init(32,FMOD_INIT_NORMAL,nullptr));std::vector<float> pcm(8192*2);pcm[0]=pcm[1]=1;FMOD_CREATESOUNDEXINFO info{};info.cbsize=sizeof(info);info.length=pcm.size()*sizeof(float);info.numchannels=2;info.defaultfrequency=48000;info.format=FMOD_SOUND_FORMAT_PCMFLOAT;FMOD::Sound* sound;check(s->createSound((char*)pcm.data(),FMOD_OPENMEMORY|FMOD_OPENRAW,&info,&sound));FMOD::Channel* channel;check(s->playSound(sound,nullptr,true,&channel));FMOD::DSP* eq;check(s->createDSPByType(FMOD_DSP_TYPE_MULTIBAND_EQ,&eq));check(eq->setParameterFloat(1,hz));check(channel->addDSP(0,eq));FMOD_DSP_DESCRIPTION desc{};desc.pluginsdkversion=FMOD_PLUGIN_SDK_VERSION;strcpy(desc.name,"Capture");desc.numinputbuffers=1;desc.numoutputbuffers=1;desc.read=capture;FMOD::DSP* tap;check(s->createDSP(&desc,&tap));check(channel->addDSP(0,tap));check(channel->setPaused(false));while(frames<4096)check(s->update());check(s->release());fclose(dest);printf("captured %u frames\n",frames);}

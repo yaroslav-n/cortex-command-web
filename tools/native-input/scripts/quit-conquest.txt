@@ -1,0 +1,16 @@
+# Conquest -> New Campaign -> Start -> menu -> Quit Program -> Quit.
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 208
+wait 4000
+click 648 435
+wait 5000
+click 516 632
+wait 7000
+click 1271 753
+wait 2500
+key F12
+wait 1000
+quit

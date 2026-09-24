@@ -1,0 +1,10 @@
+# Conquest notice and New Campaign dialog at 864x558 x1.5.
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 208
+wait 4000
+key F12
+wait 1500
+quit

@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Audio output check</title></head>
+<body>
+<h1>Audio output check</h1>
+<p>Decodes a FLAC and an Ogg file from the game and plays them through the audio
+backend. Starting audio needs a click.</p>
+<button id="start">Run</button>
+<pre id="output"></pre>
+<script src="check-report.js"></script>
+<script>
+var Module = checkModule({noInitialRun: true, onRuntimeInitialized: () => { window.checkReady = true; }});
+document.getElementById('start').onclick = () => Module.callMain([]);
+</script>
+<script src="audio_check.js"></script>
+</body>
+</html>

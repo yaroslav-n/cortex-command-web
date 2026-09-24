@@ -1,0 +1,47 @@
+<!doctype html><meta charset="utf-8"><title>Storage concurrency regression</title><h1>Storage concurrency regression</h1><pre id="output">Starting isolated storage instances…</pre><script src="check-report.js"></script><script src="storage_runtime.js"></script><script>
+(async()=>{const out=document.getElementById('output');try{
+const path='/CortexStorageRace-'+Date.now();const sync=(r,populate)=>new Promise((resolve,reject)=>r.FS.syncfs(populate,e=>e?reject(e):resolve()));
+const make=async()=>{const r=await StorageRuntime();r.installPersistenceJournal();r.FS.mkdir(path);r.FS.mount(r.IDBFS,{},path);await sync(r,true);return r;};
+const a=await make();const stale=await make();const file=path+'/scene.ini';
+a.FS.writeFile(file,'AddScene = Scene\n\tPresetName = concurrency-fixture\n');await sync(a,false);
+const before=await make();if(before.FS.readFile(file,{encoding:'utf8'})!==a.FS.readFile(file,{encoding:'utf8'}))throw Error('initial commit failed');
+await sync(stale,false);const after=await make();
+const check=(ok,why)=>{if(!ok)throw Error(why);};
+const read=(r,p)=>r.FS.readFile(p,{encoding:'utf8'});
+check(after.FS.analyzePath(file).exists,'stale instance deleted another scene');
+// An old copy must not revert newer contents, including equal timestamps.
+const old=await make();const stamp=a.FS.stat(file).mtime;
+a.FS.writeFile(file,'new revision');a.FS.utime(file,stamp,stamp);await sync(a,false);await sync(old,false);
+check(read(await make(),file)==='new revision','same-timestamp update lost or stale copy overwrote newer contents');
+// Intentional deletion stays deleted after a stale reader syncs.
+a.FS.unlink(file);await sync(a,false);await sync(old,false);
+check(!(await make()).FS.analyzePath(file).exists,'deleted file resurrected');
+// Directory rename includes descendants and empty directories.
+a.FS.mkdir(path+'/old');a.FS.mkdir(path+'/old/empty');a.FS.writeFile(path+'/old/item','moved');await sync(a,false);
+a.FS.rename(path+'/old',path+'/renamed');await sync(a,false);
+const moved=await make();check(read(moved,path+'/renamed/item')==='moved'&&moved.FS.analyzePath(path+'/renamed/empty').exists&&!moved.FS.analyzePath(path+'/old').exists,'directory rename incomplete');
+// A stale empty-directory deletion must not orphan a remotely added child.
+a.FS.mkdir(path+'/shared');await sync(a,false);const empty=await make();
+a.FS.writeFile(path+'/shared/remote','keep');await sync(a,false);empty.FS.rmdir(path+'/shared');await sync(empty,false);
+check(read(await make(),path+'/shared/remote')==='keep','stale rmdir orphaned remote child');
+// A failed database acquisition leaves mutations available for retry.
+a.FS.writeFile(path+'/retry','retained');const getDB=a.IDBFS.getDB;a.IDBFS.getDB=(name,callback)=>callback(Error('injected failure'));
+let failed=false;try{await sync(a,false);}catch(e){failed=true;}finally{a.IDBFS.getDB=getDB;}
+check(failed,'failure injection did not run');await sync(a,false);check(read(await make(),path+'/retry')==='retained','failed commit lost journal');
+// An aborted IndexedDB transaction must retain every dirty record for retry.
+a.FS.writeFile(path+'/retry','after abort');a.FS.writeFile(path+'/aborted-new','atomic');
+a.IDBFS.getDB=(name,callback)=>getDB(name,(error,db)=>callback(error,error?null:{transaction(...args){const tx=db.transaction(...args);queueMicrotask(()=>tx.abort());return tx;}}));
+failed=false;try{await sync(a,false);}catch(e){failed=true;}finally{a.IDBFS.getDB=getDB;}
+check(failed,'transaction abort did not fail');const aborted=await make();check(read(aborted,path+'/retry')==='retained'&&!aborted.FS.analyzePath(path+'/aborted-new').exists,'aborted transaction partially committed');
+await sync(a,false);check(read(await make(),path+'/retry')==='after abort','aborted transaction lost journal');
+// Queue overlapping flushes, retaining mutations newer than the first snapshot.
+a.FS.writeFile(path+'/pending','first');const first=sync(a,false);a.FS.writeFile(path+'/pending','second');const second=sync(a,false);await Promise.all([first,second]);
+check(read(await make(),path+'/pending')==='second','in-flight mutation lost');
+// Auto-persist still schedules mutation commits.
+const automatic=await StorageRuntime();automatic.installPersistenceJournal();automatic.FS.mkdir(path);automatic.FS.mount(automatic.IDBFS,{autoPersist:true},path);await sync(automatic,true);
+automatic.FS.writeFile(path+'/automatic','scheduled');
+await new Promise(resolve=>setTimeout(resolve,100));
+check(read(await make(),path+'/automatic')==='scheduled','auto persist failed');
+out.textContent='Stale-instance preservation, newer and same-timestamp writes, deletion, directory rename, remote children, failed-commit retry, atomic transaction abort, overlapping flushes and auto-persist. Isolated database: '+path+'\n';reportCheck('pass');
+}catch(e){out.textContent='Fixture failed: '+e+'\n';reportCheck('fail',String(e));}})();
+</script>

@@ -1,0 +1,30 @@
+# Tutorial: camera occlusion and screen size, printed from the Lua console.
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 208
+wait 4000
+click 648 397
+wait 30000
+key `
+wait 1500
+text print(CameraMan:GetScreenOcclusion(0).X..','..CameraMan:GetScreenOcclusion(0).Y)
+wait 300
+key Return
+wait 1200
+text print(FrameMan.PlayerScreenWidth..','..FrameMan.PlayerScreenHeight)
+wait 300
+key Return
+wait 1200
+text print(CameraMan:GetOffset(0).X..','..CameraMan:GetScrollTarget(0).X)
+wait 300
+key Return
+wait 1200
+text print(SceneMan.SceneWidth..','..SceneMan.SceneHeight)
+wait 300
+key Return
+wait 1200
+key F12
+wait 1500
+quit

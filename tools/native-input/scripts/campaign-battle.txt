@@ -1,0 +1,53 @@
+# Load the saved campaign "WebTest" (EXTRA_USERDATA for the original), advance to
+# day two and open the site the AI took. 864x558 x1.5; window points.
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 208
+wait 4000
+click 648 435
+wait 5000
+click 643 632
+wait 3000
+click 737 375
+wait 1500
+click 585 422
+wait 1500
+key F12
+wait 1500
+click 589 505
+wait 6000
+key Space
+wait 4000
+key Space
+wait 4000
+key Space
+wait 4000
+key F12
+wait 1000
+key Space
+wait 4000
+key F12
+wait 1000
+click 819 485
+wait 3000
+key F12
+wait 1500
+drag 603 415 740 415
+wait 1500
+key F12
+wait 1000
+key Space
+wait 7000
+key F12
+wait 1000
+key Space
+wait 14000
+key F12
+wait 1000
+click 648 418
+wait 12000
+key F12
+wait 1500
+quit

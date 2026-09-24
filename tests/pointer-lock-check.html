@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Mouse capture verification</title></head><body>
+<h1>Mouse capture verification</h1><p>Click the gray canvas to capture the mouse. Press Escape to release it.</p>
+<canvas id="capture" width="600" height="300" tabindex="0" style="background:#555"></canvas><pre id="output"></pre>
+<script>
+const canvas=document.getElementById('capture'), output=document.getElementById('output');
+function report(text){output.textContent+=text+'\n';}
+canvas.onclick=async()=>{canvas.focus(); report(JSON.stringify({event:'click',secure:isSecureContext,focus:document.hasFocus(),visible:document.visibilityState,active:navigator.userActivation.isActive}));try{await canvas.requestPointerLock();report('request resolved; locked='+String(document.pointerLockElement===canvas));}catch(e){report('request rejected: '+e.name+': '+e.message);}};
+document.addEventListener('pointerlockchange',()=>report('pointerlockchange: '+String(document.pointerLockElement===canvas)));
+document.addEventListener('pointerlockerror',()=>report('pointerlockerror'));
+report('requestPointerLock available: '+String(typeof canvas.requestPointerLock==='function'));
+</script></body></html>

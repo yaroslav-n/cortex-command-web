@@ -1,0 +1,74 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>AudioWorklet probe</title></head>
+<body>
+<h1>AudioWorklet probe</h1>
+<p>miniaudio's AudioWorklet backend under the game's build flags, without the game's
+mixer: a raw device playing a sine, then miniaudio's own engine graph. Opened with
+<code>?auto</code> it runs both and reports the result.</p>
+<button id="start">Start raw device</button>
+<button id="startEngine">Start ma_engine</button>
+<button id="grow">Grow heap 256MB</button>
+<pre id="output"></pre>
+<script src="check-report.js"></script>
+<script>
+var Module = checkModule({onExit: undefined, onRuntimeInitialized: () => {
+  log('ready');
+  if (new URLSearchParams(location.search).has('auto')) runAutomatically();
+}});
+window.probeReport = () => ({
+  callbacks: Module.ccall('probe_callback_count', 'number', [], []),
+  frames: Module.ccall('probe_frame_count', 'number', [], []),
+  lastPeak: Module.ccall('probe_last_peak', 'number', [], []),
+  stateSeen: Module.ccall('probe_device_state_seen', 'number', [], []),
+  engineFrames: Module.ccall('probe_engine_frames', 'number', [], []),
+});
+function startRaw() {
+  // ma_device_init suspends while the worklet is created, so the call returns a promise.
+  return Module.ccall('probe_start', 'number', [], [], {async: true}).then((code) => {
+    log('start -> ' + code);
+    return code;
+  });
+}
+function startEngine() {
+  return Module.ccall('probe_start_engine', 'number', [], [], {async: true}).then((code) => {
+    log('startEngine -> ' + code);
+    return code;
+  });
+}
+document.getElementById('grow').onclick = () => log('grow -> ' + Module.ccall('probe_grow_heap', 'number', ['number'], [256]));
+document.getElementById('start').onclick = () => {
+  startRaw().catch((error) => log('start threw ' + error));
+  setInterval(() => {
+    const r = window.probeReport();
+    log(`callbacks ${r.callbacks} frames ${r.frames} lastPeak ${r.lastPeak.toFixed(4)} stateSeen ${r.stateSeen}`);
+  }, 1000);
+};
+document.getElementById('startEngine').onclick = () => {
+  startEngine().catch((error) => log('startEngine threw ' + error));
+  setInterval(() => log('engine frames ' + Module.ccall('probe_engine_frames', 'number', [], [])), 1000);
+};
+async function runAutomatically() {
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  try {
+    if ((await startRaw()) !== 0) return reportCheck('fail', 'raw device did not start');
+    await wait(2500);
+    const raw = window.probeReport();
+    log(`raw device: callbacks ${raw.callbacks}, peak ${raw.lastPeak.toFixed(4)}`);
+    // The sine's amplitude is 0.25; a device that runs but outputs silence has peak 0.
+    if (raw.callbacks < 50 || Math.abs(raw.lastPeak - 0.25) > 0.01) return reportCheck('fail', 'raw device silent or not running');
+    if ((await startEngine()) !== 0) return reportCheck('fail', 'ma_engine did not start');
+    const before = window.probeReport().engineFrames;
+    await wait(2500);
+    const after = window.probeReport().engineFrames;
+    log(`ma_engine frames ${before} -> ${after}`);
+    if (after <= before) return reportCheck('fail', 'ma_engine graph not advancing');
+    reportCheck('pass', `${raw.callbacks} callbacks, peak ${raw.lastPeak.toFixed(3)}, engine ${after - before} frames`);
+  } catch (error) {
+    reportCheck('fail', String(error));
+  }
+}
+</script>
+<script src="worklet_probe.js"></script>
+</body>
+</html>
