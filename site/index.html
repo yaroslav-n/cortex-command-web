@@ -137,10 +137,31 @@ function startGame() {
   }
 }
 
-// The game's data package, once downloaded, stays in IndexedDB (Emscripten's preload cache).
+// The game's data package, once downloaded, stays in IndexedDB (Emscripten's preload
+// cache). The database alone does not mean it is there: the file packager creates it
+// before downloading anything and writes a package's METADATA record only once every
+// chunk is stored, so a first download cut short leaves it empty. A record's key is
+// "metadata/", then the page's directory URI-encoded (the packager's PACKAGE_PATH), then
+// the package's name as built, not encoded; only this directory's records count, not
+// those of a page further down the site.
+const settled = (request) => new Promise((resolve, reject) => {
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error);
+});
+
 async function gameIsStored() {
   try {
-    return (await indexedDB.databases()).some((database) => database.name === 'EM_PRELOAD_CACHE');
+    // Opening a database that does not exist would create it.
+    if (!(await indexedDB.databases()).some((database) => database.name === 'EM_PRELOAD_CACHE')) return false;
+    const db = await settled(indexedDB.open('EM_PRELOAD_CACHE'));
+    try {
+      if (!db.objectStoreNames.contains('METADATA')) return false;
+      const prefix = 'metadata/' + encodeURIComponent(location.pathname.slice(0, location.pathname.lastIndexOf('/') + 1));
+      const keys = await settled(db.transaction('METADATA').objectStore('METADATA').getAllKeys(IDBKeyRange.bound(prefix, prefix + '\uffff')));
+      return keys.some((key) => !key.slice(prefix.length).includes('%2F'));
+    } finally {
+      db.close();
+    }
   } catch {
     return false;
   }

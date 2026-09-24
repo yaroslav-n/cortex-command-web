@@ -10,9 +10,10 @@
 //     tests/check-report.js (window.checkResult);
 //   - the Node contracts, whose output must equal tests/golden/;
 //   - the game itself: its start screen downloads nothing until asked (and explains
-//     itself to a browser without JSPI), it boots to the main menu, every sound file
-//     it fetches after the start arrives, and the deterministic simulation harness
-//     reproduces its recorded state hashes.
+//     itself to a browser without JSPI, and offers a first download cut short as a
+//     download again), it boots to the main menu, every sound file it fetches after
+//     the start arrives, and the deterministic simulation harness reproduces its
+//     recorded state hashes.
 // --log prints each check's page output, which otherwise shows only on failure.
 // Build first: ./build.sh --target checks. Exit status is 0 only if every check passed.
 
@@ -53,6 +54,9 @@ const CHECKS = [
   { name: 'start-screen', start: { expect: 'offer-download', label: /^Download game \(\d+ MB\)$/, strip: true } },
   // A browser without JSPI is told so and downloads nothing.
   { name: 'start-screen-no-jspi', start: { expect: 'unsupported', removeJspi: true } },
+  // A first download that never finished is offered again with its size, not as Play:
+  // the preload cache's database exists from the start of a download.
+  { name: 'start-screen-cut-short', start: { expect: 'offer-download', label: /^Download game \(\d+ MB\)$/, cutShort: true } },
   { name: 'game-boot', game: '', expect: /^Browser menu: entered$/, timeoutMs: 180000 },
   {
     name: 'simulate-tutorial',
@@ -280,6 +284,20 @@ async function runPage(connection, base, check) {
 async function runStartScreen(connection, base, check) {
   return withTab(connection, async (tab) => {
     if (check.start.removeJspi) await tab.send('Page.addScriptToEvaluateOnNewDocument', { source: 'delete WebAssembly.Suspending;' });
+    if (check.start.cutShort) {
+      // A first visit whose download never finishes: with the package's request blocked,
+      // the preload cache's database is created and nothing is stored in it, as when a
+      // player closes the tab mid-download. Then the player comes back.
+      await tab.send('Network.enable');
+      await tab.send('Network.setBlockedURLs', { urls: ['*/cortex.data'] });
+      await tab.send('Page.navigate', { url: `${base}/index.html` });
+      if (!(await waitFor(tab, "document.body.dataset.state === 'offer-download'", 30000))) return { status: 'fail', detail: 'the first visit offered no download', lines: tab.lines };
+      await tab.evaluate("document.getElementById('start').click()");
+      const created = "indexedDB.databases().then((databases) => databases.some((database) => database.name === 'EM_PRELOAD_CACHE'))";
+      if (!(await waitFor(tab, created, 30000))) return { status: 'fail', detail: 'the download never opened the preload cache', lines: tab.lines };
+      await tab.send('Network.setBlockedURLs', { urls: [] });
+      await tab.send('Page.navigate', { url: 'about:blank' });
+    }
     await tab.send('Page.navigate', { url: `${base}/index.html` });
     const state = await waitFor(tab, "!['checking', undefined].includes(document.body.dataset.state) && document.body.dataset.state", 30000);
     if (state !== check.start.expect) return { status: 'fail', detail: `the start screen is "${state}", expected "${check.start.expect}"`, lines: tab.lines };
