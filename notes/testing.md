@@ -13,7 +13,7 @@ node tools/run-checks.mjs           # --list, --only a,b, --angle metal, --chrom
 
 `run-checks.mjs` serves `dist/` itself with the cross-origin isolation headers,
 starts its own headless Chrome with a fresh temporary profile at a fixed
-1280×720 window, and runs nineteen checks in about fifty seconds:
+1280×720 window, and runs twenty checks in about fifty seconds:
 
 - **test pages** — each Emscripten test program's page loads
   `tests/check-report.js`, which shows the output and turns the program's exit
@@ -28,7 +28,9 @@ starts its own headless Chrome with a fresh temporary profile at a fixed
   "Download game" with a size and shows the strip under the game, two links and
   Fullscreen, with the game's area 50 px shorter than the window (`start-screen`),
   a browser without JSPI is told so
-  and fetches nothing (`start-screen-no-jspi`), it boots to the main menu, every
+  and fetches nothing (`start-screen-no-jspi`), a first download that never
+  finished is offered again with its size, not as Play (`start-screen-cut-short`),
+  it boots to the main menu, every
   sound file it fetches after the start arrives (`sound-files`), and the serial
   simulation harness reproduces its recorded result lines, state hash, object
   count and random stream (the random-draw count depends on the window size, hence

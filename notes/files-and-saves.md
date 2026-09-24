@@ -92,13 +92,28 @@ browser can run it — `crossOriginIsolated` (the page's COOP/COEP headers) and
 WebAssembly JSPI — and otherwise says which is missing and stops there. Then it
 offers **Download game (357 MB)**, the size added up from `HEAD` requests for
 `cortex.js`, `cortex.wasm` and `cortex.data` and from the sound list, or **Play**
-when the browser already keeps the data package (an `EM_PRELOAD_CACHE` database
-exists). Only the button loads `cortex.js`, which fetches the program and the
+when the browser already keeps the data package (its record in `EM_PRELOAD_CACHE`,
+below). Only the button loads `cortex.js`, which fetches the program and the
 package; a player who asked to download it then presses Play, and a returning one's
 Play starts the game as soon as it has loaded. `body[data-state]` names the step
 (`checking`, `unsupported`, `offer-download`, `offer-play`, `loading`, `ready`,
 `running`, `failed`, `closed`) for the tools: `tools/run-checks.mjs` and the driver's
 `play` command go through it as a player would.
+
+**What counts as kept** is the package's record, not the database. Emscripten's
+file packager creates `EM_PRELOAD_CACHE` before it downloads anything and writes a
+package's `METADATA` record only once every chunk is stored, so a first download
+cut short leaves the database empty. The page used to offer Play whenever the
+database existed: a player who closed the tab at 6 of 52 MB on a 50 Mbit/s link
+came back to Play, which downloaded all 357 MB again with no size shown. It now
+wants a record whose key is `metadata/`, then this page's directory URI-encoded
+(the packager's `PACKAGE_PATH`), then the package's name as built — an absolute
+path on the build machine, so the page matches the directory and not the whole
+key. A package stored by a page in another directory of the same site does not
+count either. `start-screen-cut-short` blocks the package's request, comes back,
+and requires the download again. After an update the record is the old build's,
+which the page cannot tell before `cortex.js` has loaded, so a returning player's
+Play then downloads the new package.
 
 It used to load `cortex.js` from the page itself, so anyone who opened the link, and
 a browser that was then told it could not run the game, downloaded everything;

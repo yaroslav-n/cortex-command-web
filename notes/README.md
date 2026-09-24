@@ -42,11 +42,13 @@ build/, dist/        build output (not committed); dist/ is the deployable app
 ../original-code/    the original game, untouched — outside this repository
 ```
 
-The deployable set is exactly four files — `index.html`, `cortex.js`,
-`cortex.wasm`, `cortex.data` — served with cross-origin isolation headers; the
-pthread and AudioWorklet glue are inlined in `cortex.js`. Verified by serving only
-those four from an empty directory on a fresh origin (again for the JSPI build:
-harness, audio and title screen).
+The deployable set is `index.html`, `cortex.js`, `cortex.wasm`, `cortex.data` and
+the `audio/` directory (every sound file and `manifest.tsv`, their list), served
+with cross-origin isolation headers; the pthread and AudioWorklet glue are inlined
+in `cortex.js`. Verified by serving only these from an empty directory under
+`/cortex/` on a fresh origin: the main menu, and every sound file arrived. The four
+files without `audio/` are not enough: the page offers a 63 MB download, and the
+game then stops at "Could not load the list of sound files".
 
 **Chrome is the only officially supported browser**, version 137 or newer: the
 main loop suspends through WebAssembly JSPI (see [threads](threads.md)), and the
