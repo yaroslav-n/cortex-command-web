@@ -1,0 +1,17 @@
+# In a running mission (launch settings): F12, Alt+W (scene preview dump), RAlt+W
+# (world dump), then the console's messages.
+wait 25000
+focus
+move 20 20
+wait 1000
+key F12
+wait 3000
+key LAlt+W
+wait 5000
+key RAlt+W
+wait 8000
+key `
+wait 2000
+key F12
+wait 3000
+quit

@@ -1,0 +1,13 @@
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 208
+wait 8000
+move 648 435
+wait 1500
+click 648 435
+wait 8000
+key F12
+wait 800
+quit

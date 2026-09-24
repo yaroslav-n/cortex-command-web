@@ -1,0 +1,91 @@
+#include "GUI.h"
+
+using namespace RTE;
+
+GUIInput::GUIInput(int whichPlayer, bool keyJoyMouseCursor) {
+	// Clear all the states
+	memset(m_KeyboardBuffer, 0, sizeof(unsigned char) * KEYBOARD_BUFFER_SIZE);
+	memset(m_ScanCodeState, 0, sizeof(unsigned char) * KEYBOARD_BUFFER_SIZE);
+	memset(m_MouseButtonsEvents, 0, sizeof(int) * 3);
+	memset(m_MouseButtonsStates, 0, sizeof(int) * 3);
+
+	m_TextInput.clear();
+	m_HasTextInput = false;
+
+	m_MouseX = 0;
+	m_MouseY = 0;
+	m_LastFrameMouseX = 0;
+	m_LastFrameMouseY = 0;
+
+	m_MouseOffsetX = 0;
+	m_MouseOffsetY = 0;
+	m_Modifier = ModNone;
+
+	m_KeyJoyMouseCursor = keyJoyMouseCursor;
+
+	m_Player = whichPlayer;
+
+	m_MouseWheelChange = 0;
+}
+
+GUIInput::~GUIInput() {
+	Destroy();
+}
+
+void GUIInput::Destroy() {}
+
+void GUIInput::GetKeyboard(unsigned char* Buffer) const {
+	if (Buffer) {
+		memcpy(Buffer, m_KeyboardBuffer, sizeof(unsigned char) * KEYBOARD_BUFFER_SIZE);
+	}
+}
+
+unsigned char GUIInput::GetAsciiState(unsigned char ascii) const {
+	return m_KeyboardBuffer[ascii];
+}
+
+unsigned char GUIInput::GetScanCodeState(unsigned char scancode) const {
+	return m_ScanCodeState[scancode];
+}
+
+void GUIInput::GetMouseButtons(int* Buttons, int* States) const {
+	if (Buttons) {
+		memcpy(Buttons, m_MouseButtonsEvents, sizeof(int) * 3);
+	}
+	if (States) {
+		memcpy(States, m_MouseButtonsStates, sizeof(int) * 3);
+	}
+}
+
+void GUIInput::ClearMouseState() {
+	memset(m_MouseButtonsEvents, 0, sizeof(int) * 3);
+	memset(m_MouseButtonsStates, 0, sizeof(int) * 3);
+}
+
+void GUIInput::GetMousePosition(int* X, int* Y) const {
+	if (X) {
+		*X = (m_MouseX + m_MouseOffsetX);
+	}
+	if (Y) {
+		*Y = (m_MouseY + m_MouseOffsetY);
+	}
+}
+
+void GUIInput::Update() {
+	// Do nothing
+}
+
+int GUIInput::GetModifier() const {
+	return m_Modifier;
+}
+
+void GUIInput::StartTextInput() {
+	m_TextInputActive++;
+}
+
+void GUIInput::StopTextInput() {
+	m_TextInputActive--;
+	if (m_TextInputActive < 0) {
+		m_TextInputActive = 0;
+	}
+}

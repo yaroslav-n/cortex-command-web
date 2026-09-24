@@ -1,0 +1,43 @@
+name: Build and check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The Emscripten SDK and CMake, installed by tools/setup-toolchains.sh.
+      - uses: actions/cache@v4
+        with:
+          path: toolchains
+          key: toolchains-${{ runner.os }}-${{ hashFiles('tools/setup-toolchains.sh') }}
+
+      - name: Install toolchains
+        run: tools/setup-toolchains.sh
+
+      - name: Build the game and the test programs
+        run: ./build.sh --target checks
+
+      # Headless Chrome on a runner has no sound card; the audio checks need an output
+      # device, which a PulseAudio null sink provides.
+      - name: Start a virtual audio device
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+
+      - name: Run the checks
+        run: |
+          NODE=$(ls -d toolchains/emsdk/node/*/bin/node | tail -1)
+          "$NODE" tools/run-checks.mjs --chrome "$(command -v google-chrome)"

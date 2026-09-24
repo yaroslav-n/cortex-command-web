@@ -1,0 +1,48 @@
+# New Campaign, then Space through the day's phases, a screenshot after each.
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 208
+wait 4000
+click 648 435
+wait 5000
+click 516 632
+wait 6000
+key Space
+wait 3500
+key F12
+wait 800
+key Space
+wait 3500
+key F12
+wait 800
+key Space
+wait 3500
+key F12
+wait 800
+key Space
+wait 3500
+key F12
+wait 800
+key Space
+wait 3500
+key F12
+wait 800
+key Space
+wait 3500
+key F12
+wait 800
+key Space
+wait 3500
+key F12
+wait 800
+key Space
+wait 3500
+key F12
+wait 800
+key Space
+wait 3500
+key F12
+wait 800
+quit

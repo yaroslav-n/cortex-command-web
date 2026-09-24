@@ -1,0 +1,27 @@
+# Conquest: notice, New Campaign dialog, day one and its first phases.
+# 864x558 x1.5; coordinates are window points (game pixels x1.5).
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 208
+wait 4000
+key F12
+wait 1500
+click 648 435
+wait 5000
+key F12
+wait 1500
+click 516 632
+wait 7000
+key F12
+wait 1500
+click 1184 753
+wait 6000
+key F12
+wait 1500
+click 1184 753
+wait 6000
+key F12
+wait 1500
+quit

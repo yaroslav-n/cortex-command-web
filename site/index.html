@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Cortex Command</title><style>
+html,body{margin:0;min-height:100%;background:#000;color:#eac557;font-family:system-ui,sans-serif}
+body{overflow:hidden}
+#game{position:fixed;left:0;top:0;right:0;bottom:50px;background:#000}#game:fullscreen{bottom:0}
+canvas{display:block;width:100%;height:100%;outline:none;image-rendering:pixelated}
+#launch{position:absolute;inset:0;display:grid;place-content:center;text-align:center;background:#090b10;z-index:2;padding:24px}
+#bar{position:fixed;left:0;right:0;bottom:0;height:50px;box-sizing:border-box;padding:0 16px;display:flex;align-items:center;justify-content:space-between;gap:16px;background:#000;font-size:13px}
+#bar nav{display:flex;gap:20px;min-width:0;overflow:hidden}#bar a{color:#aaa;text-decoration:none;white-space:nowrap}#bar a:hover{color:#eac557}
+#bar button{margin:0;padding:7px 14px;font-size:13px;background:none;color:#eac557;border:1px solid #6b5a26;flex:none}#bar button:hover{border-color:#eac557}
+h1{font-size:32px;font-weight:650;letter-spacing:3px;margin-bottom:8px}p{color:#ccc;font-size:14px;max-width:34em;margin-left:auto;margin-right:auto}
+button{background:#eac557;color:#17130a;border:0;padding:14px 32px;border-radius:4px;font-size:16px;cursor:pointer;margin-top:16px}button:disabled{opacity:.4;cursor:wait}
+#errors{color:#ffb9b9;white-space:pre-wrap;max-width:80vw;font:13px monospace}body.running #launch{display:none}
+</style></head><body data-state="checking">
+<div id="game">
+<canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<div id="launch"><h1>CORTEX COMMAND</h1><p id="status"></p><button id="start" hidden></button><pre id="errors"></pre></div>
+</div>
+<div id="bar"><nav><a href="https://github.com/yaroslav-n/cortex-command-web" target="_blank" rel="noopener">This port on GitHub</a><a href="https://github.com/cortex-command-community/Cortex-Command-Community-Project" target="_blank" rel="noopener">Original game</a></nav><button id="fullscreen" type="button">Fullscreen</button></div>
+<script>
+// The start screen. Nothing of the game is downloaded until the player asks for it:
+// the page checks that this browser can run the game, then offers "Download game"
+// with its size or, when the browser keeps the game from an earlier visit, "Play".
+// body[data-state] says where it is, for people and for tools/run-checks.mjs:
+// checking, unsupported, offer-download, offer-play, loading, ready, running,
+// failed or closed. See notes/files-and-saves.md.
+const status = document.getElementById('status');
+const button = document.getElementById('start');
+const errors = document.getElementById('errors');
+const canvas = document.getElementById('canvas');
+const query = new URLSearchParams(location.search);
+// What the page shows if the game fails: the first lines that look like errors, which
+// the rest of a failure would otherwise push out, and the last lines before it.
+const recentOutput = [];
+const firstErrors = [];
+if (query.has('thread-debug')) Error.stackTraceLimit = 64;
+
+function setState(state) {
+  document.body.dataset.state = state;
+  document.body.classList.toggle('running', state === 'running');
+}
+
+function offer(label, onclick) {
+  button.textContent = label;
+  button.hidden = false;
+  button.disabled = false;
+  button.onclick = onclick;
+}
+
+function logLine(line, error = false) {
+  const text = String(line).replace(/\x1b\[[0-9;]*m/g, '');
+  recentOutput.push(text);
+  if (recentOutput.length > 60) recentOutput.shift();
+  if (firstErrors.length < 20 && /error|exception|abort|assert|cannot enlarge|out of memory/i.test(text)) firstErrors.push(text);
+  (error ? console.error : console.log)(line);
+  if (error && String(line).includes('Blocking on the main thread') && query.has('thread-debug')) console.log('Blocking call stack: ' + new Error().stack);
+}
+
+function failure(message) {
+  // A failure is often reported more than once (the error and then the abort); the
+  // first report decides what the page says.
+  if (document.body.dataset.state !== 'failed') {
+    status.textContent = document.body.dataset.state === 'running' ? 'The game stopped with an error.' : 'The game could not start.';
+  }
+  setState('failed');
+  const first = firstErrors.length ? 'First errors:\n' + firstErrors.join('\n') + '\n\nLast output:\n' : '';
+  errors.textContent = first + recentOutput.join('\n') + '\n' + String(message);
+  button.hidden = true;
+}
+
+const megabytes = (bytes) => Math.round(bytes / 1e6);
+
+let playWhenReady = false;
+var Module = {
+  canvas,
+  noInitialRun: true,
+  threadDiagnostics: query.has('thread-debug'),
+  graphicsDiagnostics: query.has('graphics-debug'),
+  perfDiagnostics: query.has('perf-debug'),
+  serialLoops: query.has('serial-loops'),
+  print: (line) => logLine(line),
+  printErr: (line) => logLine(line, true),
+  // Emscripten reports the data package's download as "Downloading data... (done/total)".
+  setStatus: (text) => {
+    if (document.body.dataset.state !== 'loading') return;
+    const progress = /\((\d+)\/(\d+)\)/.exec(text || '');
+    status.textContent = progress ? `Downloading the game: ${megabytes(progress[1])} of ${megabytes(progress[2])} MB` : 'Loading…';
+  },
+  onAbort: failure,
+  onRuntimeInitialized: () => {
+    if (playWhenReady) return startGame();
+    setState('ready');
+    status.textContent = 'Ready';
+    offer('Play', startGame);
+  },
+  onExit: (code) => {
+    if (code === 0 && Module.returnToStartScreen) {
+      (Module.persistSaves ? Module.persistSaves() : Promise.resolve()).then(() => location.reload());
+      return;
+    }
+    setState('closed');
+    status.textContent = code === 0 ? 'Game closed.' : 'Game exited with code ' + code;
+    offer('Play again', () => location.reload());
+  },
+};
+
+function load() {
+  setState('loading');
+  button.disabled = true;
+  status.textContent = 'Loading…';
+  const script = document.createElement('script');
+  script.src = 'cortex.js';
+  script.onerror = () => failure('Could not load cortex.js');
+  document.body.appendChild(script);
+}
+
+function startGame() {
+  setState('running');
+  button.disabled = true;
+  canvas.focus();
+  const dump = query.get('dump-scene');
+  const world = query.get('dump-world');
+  const simulate = query.get('simulate');
+  const parallel = query.get('parallel');
+  const activity = query.get('simulate-activity');
+  const argv = activity ? ['-simulate-activity', activity, simulate || '600', ...(parallel ? [parallel] : [])]
+    : simulate ? ['-simulate-tutorial', simulate, ...(parallel ? [parallel] : [])]
+    : world ? ['-dump-scene-world', world]
+    : dump ? ['-dump-scene-preview', dump]
+    : query.has('debug') ? ['-cout'] : [];
+  try {
+    const running = Module.callMain(argv);
+    if (running && running.catch) running.catch((error) => failure(error.stack || error));
+  } catch (error) {
+    failure(error.stack || error);
+  }
+}
+
+// The game's data package, once downloaded, stays in IndexedDB (Emscripten's preload cache).
+async function gameIsStored() {
+  try {
+    return (await indexedDB.databases()).some((database) => database.name === 'EM_PRELOAD_CACHE');
+  } catch {
+    return false;
+  }
+}
+
+// What "Download game" will fetch: the program, the data package and the sounds.
+async function downloadSize() {
+  try {
+    const length = async (path) => Number((await fetch(path, { method: 'HEAD', cache: 'no-store' })).headers.get('Content-Length')) || 0;
+    const list = fetch('audio/manifest.tsv', { cache: 'no-cache' }).then((response) => (response.ok ? response.text() : ''));
+    const [script, program, data, sounds] = await Promise.all([length('cortex.js'), length('cortex.wasm'), length('cortex.data'), list]);
+    const files = new Map();
+    for (const line of sounds.split('\n')) {
+      const fields = line.split('\t');
+      if (fields[4]) files.set(fields[4], Number(fields[1]));
+    }
+    return script + program + data + [...files.values()].reduce((sum, bytes) => sum + bytes, 0);
+  } catch {
+    return 0;
+  }
+}
+
+// The strip under the game: links, and a button that gives the game the whole screen.
+// The game's area goes fullscreen, not the page, so the strip is not shown there, and
+// Esc leaves as usual. SDL takes any fullscreen change on the page for its own window
+// going fullscreen and then ignores resizes (Emscripten_HandleFullscreenChange), which
+// would keep the game at its old size; kept from SDL, the change reaches it as a resize
+// and the game's resolution follows (notes/display.md).
+const game = document.getElementById('game');
+const fullscreen = document.getElementById('fullscreen');
+for (const type of ['fullscreenchange', 'webkitfullscreenchange']) game.addEventListener(type, (event) => event.stopPropagation());
+fullscreen.hidden = !document.fullscreenEnabled;
+// A focused button would also take the game's Space and Enter.
+fullscreen.addEventListener('mousedown', (event) => event.preventDefault());
+fullscreen.addEventListener('click', () => game.requestFullscreen().catch(() => {}).finally(() => canvas.focus()));
+
+window.addEventListener('error', (event) => failure(event.message));
+if (Module.threadDiagnostics) setInterval(() => console.log('Engine stage: ' + Module.engineStage + ' visits=' + Module.engineStageVisits), 5000);
+
+(async () => {
+  if (!self.crossOriginIsolated) {
+    setState('unsupported');
+    status.textContent = 'This page cannot run the game: it must be served with cross-origin isolation (the Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers).';
+    return;
+  }
+  if (typeof WebAssembly.Suspending !== 'function') {
+    setState('unsupported');
+    status.textContent = 'This browser cannot run the game: it needs WebAssembly JSPI (Chrome 137 or newer).';
+    return;
+  }
+  if (await gameIsStored()) {
+    setState('offer-play');
+    offer('Play', () => {
+      playWhenReady = true;
+      load();
+    });
+    return;
+  }
+  setState('offer-download');
+  status.textContent = 'The game is downloaded once; your browser keeps it for later visits.';
+  offer('Download game', load);
+  const size = await downloadSize();
+  if (size && document.body.dataset.state === 'offer-download') button.textContent = `Download game (${megabytes(size)} MB)`;
+})();
+</script></body></html>

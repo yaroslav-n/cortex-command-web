@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>Editor storage inspection</title><h1>Editor storage inspection</h1><pre id="output">Reading committed scene files…</pre><script src="check-report.js"></script><script>
+(async()=>{const output=document.getElementById('output');try{
+const manifest=JSON.parse(localStorage.getItem('cortex-editor-save-contract'));
+if(!manifest||!/^BrowserEditorCheck[0-9]+$/.test(manifest.name))throw Error('No valid test manifest');
+const databases=await indexedDB.databases();if(!databases.some(d=>d.name==='/Userdata'))throw Error('Userdata database missing');
+const db=await new Promise((resolve,reject)=>{const r=indexedDB.open('/Userdata');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
+const paths=manifest.files.map(f=>f.path).concat('/Userdata/UserScenes.rte/Index.ini');
+const entries=await Promise.all(paths.map(path=>new Promise((resolve,reject)=>{const r=db.transaction('FILE_DATA','readonly').objectStore('FILE_DATA').get(path);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);})));
+db.close();const lines=['Scene: '+manifest.name];
+for(let i=0;i<manifest.files.length;i++){const f=manifest.files[i],entry=entries[i];if(!entry){lines.push('MISSING in IndexedDB: '+f.path);continue;}const bytes=entry.contents;const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(v=>v.toString(16).padStart(2,'0')).join('');lines.push((bytes.length===f.size&&hash===f.sha256?'MATCH':'DIFFERENT')+': '+f.path);}
+lines.push('UserScenes Index.ini: '+(entries[2]?new TextDecoder().decode(entries[2].contents):'MISSING'));output.textContent=lines.join('\n')+'\n';reportCheck(lines.some(l=>/^(MISSING|DIFFERENT)/.test(l))?'fail':'pass');
+}catch(e){output.textContent='Inspection failed: '+e+'\n';reportCheck('fail',String(e));}})();
+</script>

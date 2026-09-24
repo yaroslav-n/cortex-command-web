@@ -1,0 +1,38 @@
+# Each main-menu screen in turn, Escape back between them. 864x558 x1.5.
+wait 15000
+focus
+move 20 20
+wait 1000
+click 648 238
+wait 6000
+key F12
+wait 1000
+key Escape
+wait 4000
+click 648 268
+wait 3000
+key F12
+wait 1000
+key Escape
+wait 3000
+click 648 328
+wait 3000
+key F12
+wait 1000
+key Escape
+wait 3000
+click 648 358
+wait 3000
+key F12
+wait 1000
+key Escape
+wait 3000
+click 648 388
+wait 5000
+key F12
+wait 1000
+key Escape
+wait 3000
+key F12
+wait 1500
+quit
