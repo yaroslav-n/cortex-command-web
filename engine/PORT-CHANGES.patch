@@ -3131,8 +3131,30 @@ diff -ruP --exclude=*.o original/Source/Managers/SceneMan.cpp port/Source/Manage
  		if (pUnseenLayer && pUnseenLayer->GetBitmap()) {
 diff -ruP --exclude=*.o original/Source/Managers/SettingsMan.cpp port/Source/Managers/SettingsMan.cpp
 --- original/Source/Managers/SettingsMan.cpp	2026-09-24 10:48:59
-+++ port/Source/Managers/SettingsMan.cpp	2026-09-24 04:49:34
-@@ -30,13 +30,6 @@
++++ port/Source/Managers/SettingsMan.cpp	2026-09-24 21:32:01
+@@ -10,6 +10,11 @@
+ #include "UInputMan.h"
+ #include "System.h"
+ 
++#ifdef __EMSCRIPTEN__
++#include <iomanip>
++#include <sstream>
++#endif
++
+ using namespace RTE;
+ 
+ const std::string SettingsMan::c_ClassName = "SettingsMan";
+@@ -17,6 +22,9 @@
+ void SettingsMan::Clear() {
+ 	m_SettingsPath = System::GetUserdataDirectory() + "Settings.ini";
+ 	m_SettingsNeedOverwrite = false;
++#ifdef __EMSCRIPTEN__
++	m_BrowserSettingsVersion = 0;
++#endif
+ 
+ 	m_FlashOnBrainDamage = true;
+ 	m_BlipOnRevealUnseen = false;
+@@ -30,13 +38,6 @@
  	m_EnableSmartBuyMenuNavigation = true;
  	m_AutomaticGoldDeposit = true;
  
@@ -3146,13 +3168,83 @@ diff -ruP --exclude=*.o original/Source/Managers/SettingsMan.cpp port/Source/Man
  	m_AllowSavingToBase = false;
  	m_ShowForeignItems = true;
  	m_ShowMetaScenes = false;
-@@ -216,7 +209,12 @@
+@@ -91,6 +92,14 @@
+ 
+ 	int failureCode = Serializable::Create(settingsReader);
+ 
++#ifdef __EMSCRIPTEN__
++	if (m_BrowserSettingsVersion < c_BrowserSettingsVersion) {
++		// Its scale is not one the player chose (c_BrowserSettingsVersion): start at the default, and write the file again once every manager is up.
++		g_WindowMan.m_ResMultiplier = WindowMan::c_DefaultBrowserScale;
++		m_SettingsNeedOverwrite = true;
++	}
++#endif
++
+ 	if (GetAnyExperimentalSettingsEnabled()) {
+ 		// Show a message box to annoy people as much as possible while they're using experimental settings, so they can't leave it on accidentally
+ 		RTEError::ShowMessageBox("Experimental settings are enabled!\nThis may break mods, crash the game, corrupt saves or worse.\nUse at your own risk.");
+@@ -100,10 +109,43 @@
+ }
+ 
+ void SettingsMan::UpdateSettingsFile() const {
++#ifdef __EMSCRIPTEN__
++	WriteSettingsFile(SerializeSettings());
++#else
+ 	Writer settingsWriter(m_SettingsPath);
+ 	g_SettingsMan.Save(settingsWriter);
++#endif
+ }
+ 
++#ifdef __EMSCRIPTEN__
++void SettingsMan::UpdateSettingsFileIfChanged() const {
++	const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
++	if (now - m_LastChangeCheck < std::chrono::milliseconds(250)) {
++		return;
++	}
++	m_LastChangeCheck = now;
++	if (std::string settings = SerializeSettings(); settings != m_WrittenSettings) {
++		WriteSettingsFile(std::move(settings));
++	}
++}
++
++std::string SettingsMan::SerializeSettings() const {
++	auto stream = std::make_unique<std::ostringstream>();
++	std::ostringstream& text = *stream;
++	// As Writer formats a file it opens.
++	text << std::fixed << std::setprecision(6);
++	Writer settingsWriter(std::move(stream));
++	Save(settingsWriter);
++	return text.str();
++}
++
++void SettingsMan::WriteSettingsFile(std::string settings) const {
++	Writer settingsWriter(m_SettingsPath);
++	*settingsWriter.GetStream() << settings;
++	m_WrittenSettings = std::move(settings);
++}
++#endif
++
+ int SettingsMan::ReadProperty(const std::string_view& propName, Reader& reader) {
+ 	StartPropertyList(return Serializable::ReadProperty(propName, reader));
+ 
+@@ -111,6 +153,9 @@
+ 	MatchProperty("ResolutionX", { reader >> g_WindowMan.m_ResX; });
+ 	MatchProperty("ResolutionY", { reader >> g_WindowMan.m_ResY; });
+ 	MatchProperty("ResolutionMultiplier", { reader >> g_WindowMan.m_ResMultiplier; });
++#ifdef __EMSCRIPTEN__
++	MatchProperty("BrowserSettingsVersion", { reader >> m_BrowserSettingsVersion; });
++#endif
+ 	MatchProperty("EnableVSync", { reader >> g_WindowMan.m_EnableVSync; });
+ 	MatchProperty("Fullscreen", { reader >> g_WindowMan.m_Fullscreen; });
+ 	MatchProperty("UseMultiDisplays", { reader >> g_WindowMan.m_UseMultiDisplays; });
+@@ -216,7 +261,13 @@
  	writer.NewPropertyWithValue("PaletteFile", g_FrameMan.m_PaletteFile);
  	writer.NewPropertyWithValue("ResolutionX", g_WindowMan.m_ResX);
  	writer.NewPropertyWithValue("ResolutionY", g_WindowMan.m_ResY);
 +#ifdef __EMSCRIPTEN__
 +	// Save what the player chose, not the scale fitting happened to produce.
 +	writer.NewPropertyWithValue("ResolutionMultiplier", g_WindowMan.m_PreferredScale);
++	writer.NewPropertyWithValue("BrowserSettingsVersion", c_BrowserSettingsVersion);
 +#else
  	writer.NewPropertyWithValue("ResolutionMultiplier", g_WindowMan.m_ResMultiplier);
 +#endif
@@ -3161,8 +3253,30 @@ diff -ruP --exclude=*.o original/Source/Managers/SettingsMan.cpp port/Source/Man
  	writer.NewPropertyWithValue("UseMultiDisplays", g_WindowMan.m_UseMultiDisplays);
 diff -ruP --exclude=*.o original/Source/Managers/SettingsMan.h port/Source/Managers/SettingsMan.h
 --- original/Source/Managers/SettingsMan.h	2026-09-24 10:48:59
-+++ port/Source/Managers/SettingsMan.h	2026-09-24 04:49:27
-@@ -200,56 +200,6 @@
++++ port/Source/Managers/SettingsMan.h	2026-09-24 21:31:46
+@@ -6,6 +6,9 @@
+ #include <list>
+ #include <cmath>
+ #include <algorithm>
++#ifdef __EMSCRIPTEN__
++#include <chrono>
++#endif
+ 
+ #define g_SettingsMan SettingsMan::Instance()
+ 
+@@ -42,6 +45,11 @@
+ 
+ 		/// Overwrites the settings file to save changes made from within the game.
+ 		void UpdateSettingsFile() const;
++
++#ifdef __EMSCRIPTEN__
++		/// Overwrites the settings file if any setting differs from what was last written; it compares at most four times a second. Upstream writes the file when the player leaves the settings screen, but a browser player can close the page at any moment, so the settings screens call this while they are open (specs/settings.md).
++		void UpdateSettingsFileIfChanged() const;
++#endif
+ #pragma endregion
+ 
+ #pragma region Engine Settings
+@@ -200,56 +208,6 @@
  		bool GetAutomaticGoldDeposit() const { return m_AutomaticGoldDeposit; }
  #pragma endregion
  
@@ -3219,7 +3333,7 @@ diff -ruP --exclude=*.o original/Source/Managers/SettingsMan.h port/Source/Manag
  #pragma region Editor Settings
  		/// Returns the list of visible assembly groups.
  		/// @return List of visible assembly groups.
-@@ -378,12 +328,6 @@
+@@ -378,12 +336,6 @@
  		bool m_EnableSmartBuyMenuNavigation; //!< Whether swapping to equipment mode and back should change active tabs in the BuyMenu.
  		bool m_AutomaticGoldDeposit; //!< Whether gold gathered by Actors is automatically added into team funds. False means that gold needs to be manually transported into orbit via Craft.
  
@@ -3232,6 +3346,27 @@ diff -ruP --exclude=*.o original/Source/Managers/SettingsMan.h port/Source/Manag
  
  		bool m_AllowSavingToBase; //!< Whether editors will allow to select Base.rte as a module to save in.
  		bool m_ShowMetaScenes; //!< Show MetaScenes in editors and activities.
+@@ -419,6 +371,20 @@
+ 		static const std::string c_ClassName; //!< A string with the friendly-formatted type name of this.
+ 
+ 		std::string m_SettingsPath; //!< String containing the Path to the Settings.ini file.
++
++#ifdef __EMSCRIPTEN__
++		/// Written into every browser Settings.ini. A file without it holds no scale the player chose: its ResolutionMultiplier is the old 1x default, or a value the Video settings saved when the player only opened and closed the scale list. Such a file starts at the default scale.
++		static constexpr int c_BrowserSettingsVersion = 1;
++		int m_BrowserSettingsVersion; //!< The version the loaded Settings.ini was written with, 0 when it has none.
++		mutable std::string m_WrittenSettings; //!< What was last written to Settings.ini.
++		mutable std::chrono::steady_clock::time_point m_LastChangeCheck; //!< When UpdateSettingsFileIfChanged last compared the settings with the file.
++
++		/// The settings, formatted exactly as UpdateSettingsFile writes them.
++		std::string SerializeSettings() const;
++
++		/// Writes the given serialized settings to Settings.ini and remembers them.
++		void WriteSettingsFile(std::string settings) const;
++#endif
+ 
+ 		/// Clears all the member variables of this SettingsMan, effectively resetting the members of this abstraction level only.
+ 		void Clear();
 diff -ruP --exclude=*.o original/Source/Managers/ThreadMan.cpp port/Source/Managers/ThreadMan.cpp
 --- original/Source/Managers/ThreadMan.cpp	2026-09-24 10:48:59
 +++ port/Source/Managers/ThreadMan.cpp	2026-09-20 01:52:43
@@ -4027,8 +4162,8 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  }
 diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Managers/WindowMan.h
 --- original/Source/Managers/WindowMan.h	2026-09-24 10:48:59
-+++ port/Source/Managers/WindowMan.h	2026-09-24 19:27:07
-@@ -97,6 +97,14 @@
++++ port/Source/Managers/WindowMan.h	2026-09-24 21:31:39
+@@ -97,6 +97,17 @@
  		/// @return What multiple the game resolution is currently sized at.
  		float GetResMultiplier() const { return m_ResMultiplier; }
  
@@ -4038,12 +4173,15 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Manager
 +		/// SetViewportLetterboxed rewrites it on every resize — so it cannot also hold
 +		/// the preference without drifting.
 +		float GetPreferredScale() const { return m_PreferredScale; }
++
++		/// The scale a player starts at until they choose one (specs/settings.md).
++		static constexpr float GetDefaultScale() { return c_DefaultBrowserScale; }
 +#endif
 +
  		/// Gets whether VSync is enabled.
  		/// @return Whether VSync is enabled.
  		bool GetVSyncEnabled() const { return m_EnableVSync; }
-@@ -133,6 +141,15 @@
+@@ -133,6 +144,15 @@
  		/// @return The screen buffer texture.
  		std::shared_ptr<RenderTarget> GetScreenBuffer() const { return m_ScreenBuffer; }
  
@@ -4059,7 +4197,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Manager
  		void RefocusWindow() const;
  #pragma endregion
  
-@@ -160,6 +177,45 @@
+@@ -160,6 +180,45 @@
  		/// @param displaysAlreadyMapped Whether to skip mapping displays because they were already mapped elsewhere.
  		void ChangeResolution(int newResX, int newResY, float newResMultiplier = 1.0f, bool fullscreen = false, bool displaysAlreadyMapped = false);
  
@@ -4105,7 +4243,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Manager
  		/// Toggles between windowed and fullscreen mode (single display).
  		void ToggleFullscreen();
  
-@@ -200,6 +256,9 @@
+@@ -200,6 +259,9 @@
  		GLuint m_BackBuffer32Texture; //!< Streaming texture for the software rendered stuff.
  		
  		std::shared_ptr<RenderTarget> m_ScreenBuffer{};
@@ -4115,7 +4253,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Manager
  		std::unique_ptr<SDL_Rect> m_PrimaryWindowViewport; //!< Viewport for the main window.
  
  		std::vector<std::shared_ptr<SDL_Window>> m_MultiDisplayWindows; //!< Additional windows for multi-display fullscreen.
-@@ -232,6 +291,12 @@
+@@ -232,6 +294,12 @@
  		int m_ResX; //!< Game window width.
  		int m_ResY; //!< Game window height.
  		float m_ResMultiplier; //!< The number of times the game window and image should be multiplied and stretched across for better visibility.
@@ -4163,6 +4301,20 @@ diff -ruP --exclude=*.o original/Source/Menus/MainMenuGUI.cpp port/Source/Menus/
  }
  
  void MainMenuGUI::CreateMainScreen() {
+diff -ruP --exclude=*.o original/Source/Menus/ModManagerGUI.cpp port/Source/Menus/ModManagerGUI.cpp
+--- original/Source/Menus/ModManagerGUI.cpp	2026-09-24 10:48:59
++++ port/Source/Menus/ModManagerGUI.cpp	2026-09-24 21:32:23
+@@ -328,6 +328,10 @@
+ 			}
+ 		}
+ 	}
++#ifdef __EMSCRIPTEN__
++	// Written as it changes, not only when the player leaves this screen (SettingsMan::UpdateSettingsFileIfChanged).
++	g_SettingsMan.UpdateSettingsFileIfChanged();
++#endif
+ 	return false;
+ }
+ 
 Only in original/Source/Menus: MultiplayerGameGUI.cpp
 Only in original/Source/Menus: MultiplayerGameGUI.h
 diff -ruP --exclude=*.o original/Source/Menus/SaveLoadMenuGUI.cpp port/Source/Menus/SaveLoadMenuGUI.cpp
@@ -4622,10 +4774,69 @@ diff -ruP --exclude=*.o original/Source/Menus/SceneEditorGUI.h port/Source/Menus
  
  		/// Private member variable and method declarations
  	private:
+diff -ruP --exclude=*.o original/Source/Menus/SettingsGUI.cpp port/Source/Menus/SettingsGUI.cpp
+--- original/Source/Menus/SettingsGUI.cpp	2026-09-24 10:48:59
++++ port/Source/Menus/SettingsGUI.cpp	2026-09-24 21:32:23
+@@ -1,5 +1,8 @@
+ #include "SettingsGUI.h"
+ #include "WindowMan.h"
++#ifdef __EMSCRIPTEN__
++#include "SettingsMan.h"
++#endif
+ 
+ #include "GUI.h"
+ #include "AllegroScreen.h"
+@@ -187,6 +190,10 @@
+ 			m_InputSettingsMenu->HandleConfigDeviceMapping();
+ 		}
+ 	}
++#ifdef __EMSCRIPTEN__
++	// Written as it changes, not only when the player leaves this screen (SettingsMan::UpdateSettingsFileIfChanged).
++	g_SettingsMan.UpdateSettingsFileIfChanged();
++#endif
+ 	return false;
+ }
+ 
 diff -ruP --exclude=*.o original/Source/Menus/SettingsVideoGUI.cpp port/Source/Menus/SettingsVideoGUI.cpp
 --- original/Source/Menus/SettingsVideoGUI.cpp	2026-09-24 10:48:59
-+++ port/Source/Menus/SettingsVideoGUI.cpp	2026-09-23 20:53:15
-@@ -83,8 +83,47 @@
++++ port/Source/Menus/SettingsVideoGUI.cpp	2026-09-24 21:42:55
+@@ -21,9 +21,20 @@
+ #endif
+ 
+ #include <set>
++#ifdef __EMSCRIPTEN__
++#include <algorithm>
++#include <vector>
++#endif
+ 
+ using namespace RTE;
+ 
++#ifdef __EMSCRIPTEN__
++// In the browser the custom resolution box holds only the scale list, and is always
++// shown. At its layout height of 80 it lay over "Enable VSync", which then took no
++// clicks, so it is only as tall as the list's closed box.
++static constexpr int c_BrowserScaleBoxHeight = 40;
++#endif
++
+ std::string SettingsVideoGUI::PresetResolutionRecord::GetDisplayString() const {
+ #if __cpp_lib_format >= 201907L && !(defined(__APPLE__) && defined(__GNUC__)) //FIXME: macOS CI borken without this.
+ 	return std::format("{}x{} ({:.1g}x Fullscreen scale)", Width, Height, Scale);
+@@ -36,7 +47,14 @@
+     m_GUIControlManager(parentControlManager) {
+ 	m_NewResX = g_WindowMan.GetResX();
+ 	m_NewResY = g_WindowMan.GetResY();
++#ifdef __EMSCRIPTEN__
++	// What the player chose, which the scale box shows. GetResMultiplier is the fitted
++	// scale (1.62 when 2x is fitted into a short window), and closing the list applies
++	// the box's text, so showing it saved the fitted scale as the player's.
++	m_NewResMultiplier = g_WindowMan.GetPreferredScale();
++#else
+ 	m_NewResMultiplier = g_WindowMan.GetResMultiplier();
++#endif
+ 	m_NewFullscreen = g_WindowMan.IsFullscreen();
+ 
+ 	m_VideoSettingsBox = dynamic_cast<GUICollectionBox*>(m_GUIControlManager->GetControl("CollectionBoxVideoSettings"));
+@@ -83,8 +101,48 @@
  		m_PresetResolutionBox->SetVisible(false);
  		m_CustomResolutionBox->SetVisible(true);
  	}
@@ -4654,6 +4865,7 @@ diff -ruP --exclude=*.o original/Source/Menus/SettingsVideoGUI.cpp port/Source/M
 +
 +	m_CustomResolutionBox->SetVisible(true);
 +	m_CustomResolutionBox->SetEnabled(true);
++	m_CustomResolutionBox->Resize(m_CustomResolutionBox->GetWidth(), c_BrowserScaleBoxHeight);
 +	m_CustomResolutionMultiplierComboBox->Move(m_CustomResolutionBox->GetXPos() + 50, m_CustomResolutionBox->GetYPos() + 5);
 +	PopulateResMultplierComboBox();
 +}
@@ -4673,7 +4885,7 @@ diff -ruP --exclude=*.o original/Source/Menus/SettingsVideoGUI.cpp port/Source/M
  void SettingsVideoGUI::CreatePresetResolutionBox() {
  	m_PresetResolutionBox = dynamic_cast<GUICollectionBox*>(m_GUIControlManager->GetControl("CollectionPresetResolution"));
  	m_PresetResolutionComboBox = dynamic_cast<GUIComboBox*>(m_GUIControlManager->GetControl("ComboPresetResolution"));
-@@ -193,20 +232,44 @@
+@@ -193,12 +251,45 @@
  }
  
  void SettingsVideoGUI::PopulateResMultplierComboBox() {
@@ -4696,35 +4908,46 @@ diff -ruP --exclude=*.o original/Source/Menus/SettingsVideoGUI.cpp port/Source/M
 +#endif
  	m_CustomResolutionMultiplierComboBox->ClearList();
  
--	for (float resMultiplier = 1.0f; resMultiplier <= maximumResMultiplier; resMultiplier += 0.5) {
-+	int selectedIndex = 0;
-+	int index = 0;
-+	for (float resMultiplier = 1.0f; resMultiplier <= std::max(1.0F, maximumResMultiplier); resMultiplier += 0.5, ++index) {
++#ifdef __EMSCRIPTEN__
++	// The default scale and the player's own are offered even where the canvas cannot
++	// hold the minimum resolution at them: the game then fits the minimum resolution
++	// to the canvas and keeps the scale for a larger window. Without them a short
++	// window offered only 1x and 1.5x, so the default could not be kept or chosen again.
++	const float preferredScale = g_WindowMan.GetPreferredScale();
++	std::vector<float> scales;
++	for (float scale = 1.0F; scale <= std::max({1.0F, maximumResMultiplier, WindowMan::GetDefaultScale(), preferredScale}); scale += 0.5F) {
++		scales.push_back(scale);
++	}
++	if (std::find(scales.begin(), scales.end(), preferredScale) == scales.end()) {
++		scales.insert(std::upper_bound(scales.begin(), scales.end(), preferredScale), preferredScale);
++	}
++	for (int index = 0; index < static_cast<int>(scales.size()); ++index) {
++		m_CustomResolutionMultiplierComboBox->AddItem(std::format("{:.3g}x", scales[index]));
++		if (scales[index] == preferredScale) {
++			m_CustomResolutionMultiplierComboBox->SetSelectedIndex(index);
++		}
++	}
++#else
+ 	for (float resMultiplier = 1.0f; resMultiplier <= maximumResMultiplier; resMultiplier += 0.5) {
  #if __cpp_lib_format >= 201907L && !(defined(__APPLE__) && defined(__GNUC__))
  		m_CustomResolutionMultiplierComboBox->AddItem(std::format("{:.3g}x", resMultiplier));
- #else
- 		m_CustomResolutionMultiplierComboBox->AddItem(std::to_string(resMultiplier));
+@@ -207,6 +298,7 @@
  #endif
-+#ifdef __EMSCRIPTEN__
-+		if (resMultiplier == g_WindowMan.GetPreferredScale()) {
-+			selectedIndex = index;
-+		}
-+#endif
  	}
-+#ifdef __EMSCRIPTEN__
-+	m_CustomResolutionMultiplierComboBox->SetSelectedIndex(selectedIndex);
-+#else
  	m_CustomResolutionMultiplierComboBox->SetSelectedIndex(0);
 +#endif
  }
  
  void SettingsVideoGUI::UpdateCustomResolutionLimits() {
-@@ -392,6 +455,9 @@
+@@ -391,7 +483,12 @@
+ 			if (guiEvent.GetMsg() == GUIComboBox::Dropped) {
  				m_CustomResolutionBox->Resize(m_CustomResolutionBox->GetWidth(), 165);
  			} else if (guiEvent.GetMsg() == GUIComboBox::Closed) {
- 				m_CustomResolutionBox->Resize(m_CustomResolutionBox->GetWidth(), 80);
 +#ifdef __EMSCRIPTEN__
++				m_CustomResolutionBox->Resize(m_CustomResolutionBox->GetWidth(), c_BrowserScaleBoxHeight);
 +				ApplySelectedScale();
++#else
+ 				m_CustomResolutionBox->Resize(m_CustomResolutionBox->GetWidth(), 80);
 +#endif
  			}
  		}

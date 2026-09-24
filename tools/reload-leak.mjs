@@ -19,11 +19,11 @@ for (let i = 1; i <= loads; i++) {
   if (i === 1) await send('Page.navigate', { url }); else await send('Page.reload', { ignoreCache: false });
   await sleep(6000);
   if (play) {
-    // Press the start screen's button until the game runs ("Download game", then "Play").
+    // Press the start screen's "Play Game" until the game runs.
     for (let tries = 0; tries < 600; tries++) {
       const state = (await send('Runtime.evaluate', { expression: 'document.body.dataset.state', returnByValue: true })).result?.result?.value;
       if (state === 'running') break;
-      if (['offer-download', 'offer-play', 'ready'].includes(state)) await send('Runtime.evaluate', { expression: "document.getElementById('start').click()", userGesture: true });
+      if (state === 'offer-play') await send('Runtime.evaluate', { expression: "document.getElementById('start').click()", userGesture: true });
       await sleep(250);
     }
     await sleep(Number(process.env.PLAY_WAIT || 12000));

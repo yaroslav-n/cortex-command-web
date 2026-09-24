@@ -140,9 +140,16 @@ wheel and touches on the canvas, and a mouse button released over it.
 `Module.textInputActive` mirrors `SDL_TextInputActive`; `WindowMan::Present`
 reports changes every frame, in both builds.
 
-In fullscreen (the page's Fullscreen button, see [display](display.md)), Esc
-belongs to Chrome, which leaves fullscreen before the page sees the key; the game
-gets Esc again once the window is back.
+One key is the page's, not the game's: Ctrl+F, outside fullscreen, opens
+fullscreen (`site/index.html`, see [display](display.md)). A capture listener on the
+window takes it before SDL's listener does, so neither the game nor the browser's
+find sees the F or its auto-repeats; Ctrl alone still reaches the game. In
+fullscreen Ctrl+F is the game's again. Player one's default controls make Left Ctrl
+crouch and F pick up, so in the window crouching and picking up opens fullscreen
+instead.
+
+In fullscreen Esc belongs to Chrome, which leaves fullscreen before the page sees
+the key; the game gets Esc again once the window is back.
 
 Checked by sending keys to both builds and reading each event's
 `defaultPrevented` after SDL's own window listener: F5, Tab, Backspace, a letter,

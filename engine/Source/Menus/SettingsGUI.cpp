@@ -1,5 +1,8 @@
 #include "SettingsGUI.h"
 #include "WindowMan.h"
+#ifdef __EMSCRIPTEN__
+#include "SettingsMan.h"
+#endif
 
 #include "GUI.h"
 #include "AllegroScreen.h"
@@ -187,6 +190,10 @@ bool SettingsGUI::HandleInputEvents() {
 			m_InputSettingsMenu->HandleConfigDeviceMapping();
 		}
 	}
+#ifdef __EMSCRIPTEN__
+	// Written as it changes, not only when the player leaves this screen (SettingsMan::UpdateSettingsFileIfChanged).
+	g_SettingsMan.UpdateSettingsFileIfChanged();
+#endif
 	return false;
 }
 

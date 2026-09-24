@@ -6,25 +6,33 @@ body{overflow:hidden}
 #game{position:fixed;left:0;top:0;right:0;bottom:50px;background:#000}#game:fullscreen{bottom:0}
 canvas{display:block;width:100%;height:100%;outline:none;image-rendering:pixelated}
 #launch{position:absolute;inset:0;display:grid;place-content:center;text-align:center;background:#090b10;z-index:2;padding:24px}
-#bar{position:fixed;left:0;right:0;bottom:0;height:50px;box-sizing:border-box;padding:0 16px;display:flex;align-items:center;justify-content:space-between;gap:16px;background:#000;font-size:13px}
-#bar nav{display:flex;gap:20px;min-width:0;overflow:hidden}#bar a{color:#aaa;text-decoration:none;white-space:nowrap}#bar a:hover{color:#eac557}
-#bar button{margin:0;padding:7px 14px;font-size:13px;background:none;color:#eac557;border:1px solid #6b5a26;flex:none}#bar button:hover{border-color:#eac557}
+#bar{position:fixed;left:0;right:0;bottom:0;height:50px;box-sizing:border-box;padding:0 16px;display:flex;align-items:center;gap:20px;background:#000;color:#888;font-size:13px}
+#bar a{display:flex;align-items:center;gap:8px;min-width:0;color:#aaa;text-decoration:none}#bar a:hover{color:#eac557}
+#bar svg{width:16px;height:16px;flex:none;fill:currentColor}#credit{margin-right:auto}#credit span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#repo{padding:6px;margin-right:-6px}#repo svg{width:18px;height:18px}
+#fullscreen-hint{white-space:nowrap}kbd{font:inherit;color:#ccc;padding:1px 5px;border:1px solid #444;border-radius:3px}
+@media (max-width:700px){#fullscreen-hint{display:none}}
 h1{font-size:32px;font-weight:650;letter-spacing:3px;margin-bottom:8px}p{color:#ccc;font-size:14px;max-width:34em;margin-left:auto;margin-right:auto}
 button{background:#eac557;color:#17130a;border:0;padding:14px 32px;border-radius:4px;font-size:16px;cursor:pointer;margin-top:16px}button:disabled{opacity:.4;cursor:wait}
-#errors{color:#ffb9b9;white-space:pre-wrap;max-width:80vw;font:13px monospace}body.running #launch{display:none}
+#errors{color:#ffb9b9;white-space:pre-wrap;max-width:80vw;font:13px monospace}#status:empty,#errors:empty{display:none}body.running #launch{display:none}
 </style></head><body data-state="checking">
 <div id="game">
 <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
 <div id="launch"><h1>CORTEX COMMAND</h1><p id="status"></p><button id="start" hidden></button><pre id="errors"></pre></div>
 </div>
-<div id="bar"><nav><a href="https://github.com/yaroslav-n/cortex-command-web" target="_blank" rel="noopener">This port on GitHub</a><a href="https://github.com/cortex-command-community/Cortex-Command-Community-Project" target="_blank" rel="noopener">Original game</a></nav><button id="fullscreen" type="button">Fullscreen</button></div>
+<div id="bar">
+<a id="credit" href="https://github.com/cortex-command-community/Cortex-Command-Community-Project" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path id="github-mark" fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>Based on Cortex Command Community Project</span></a>
+<span id="fullscreen-hint">Open fullscreen by pressing <kbd>Ctrl</kbd> + <kbd>F</kbd></span>
+<a id="repo" href="https://github.com/yaroslav-n/cortex-command-web" target="_blank" rel="noopener" title="This port on GitHub" aria-label="This port on GitHub"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#github-mark"/></svg></a>
+</div>
 <script>
 // The start screen. Nothing of the game is downloaded until the player asks for it:
-// the page checks that this browser can run the game, then offers "Download game"
-// with its size or, when the browser keeps the game from an earlier visit, "Play".
+// the page checks that this browser can run the game, then offers "Play Game", which
+// loads the game and starts it as soon as it has loaded. The first time that is a
+// download; the browser keeps the game for later visits.
 // body[data-state] says where it is, for people and for tools/run-checks.mjs:
-// checking, unsupported, offer-download, offer-play, loading, ready, running,
-// failed or closed. See notes/files-and-saves.md.
+// checking, unsupported, offer-play, loading, running, failed or closed.
+// See notes/files-and-saves.md.
 const status = document.getElementById('status');
 const button = document.getElementById('start');
 const errors = document.getElementById('errors');
@@ -71,7 +79,6 @@ function failure(message) {
 
 const megabytes = (bytes) => Math.round(bytes / 1e6);
 
-let playWhenReady = false;
 var Module = {
   canvas,
   noInitialRun: true,
@@ -88,12 +95,7 @@ var Module = {
     status.textContent = progress ? `Downloading the game: ${megabytes(progress[1])} of ${megabytes(progress[2])} MB` : 'Loading…';
   },
   onAbort: failure,
-  onRuntimeInitialized: () => {
-    if (playWhenReady) return startGame();
-    setState('ready');
-    status.textContent = 'Ready';
-    offer('Play', startGame);
-  },
+  onRuntimeInitialized: startGame,
   onExit: (code) => {
     if (code === 0 && Module.returnToStartScreen) {
       (Module.persistSaves ? Module.persistSaves() : Promise.resolve()).then(() => location.reload());
@@ -137,93 +139,44 @@ function startGame() {
   }
 }
 
-// The game's data package, once downloaded, stays in IndexedDB (Emscripten's preload
-// cache). The database alone does not mean it is there: the file packager creates it
-// before downloading anything and writes a package's METADATA record only once every
-// chunk is stored, so a first download cut short leaves it empty. A record's key is
-// "metadata/", then the page's directory URI-encoded (the packager's PACKAGE_PATH), then
-// the package's name as built, not encoded; only this directory's records count, not
-// those of a page further down the site.
-const settled = (request) => new Promise((resolve, reject) => {
-  request.onsuccess = () => resolve(request.result);
-  request.onerror = () => reject(request.error);
-});
-
-async function gameIsStored() {
-  try {
-    // Opening a database that does not exist would create it.
-    if (!(await indexedDB.databases()).some((database) => database.name === 'EM_PRELOAD_CACHE')) return false;
-    const db = await settled(indexedDB.open('EM_PRELOAD_CACHE'));
-    try {
-      if (!db.objectStoreNames.contains('METADATA')) return false;
-      const prefix = 'metadata/' + encodeURIComponent(location.pathname.slice(0, location.pathname.lastIndexOf('/') + 1));
-      const keys = await settled(db.transaction('METADATA').objectStore('METADATA').getAllKeys(IDBKeyRange.bound(prefix, prefix + '\uffff')));
-      return keys.some((key) => !key.slice(prefix.length).includes('%2F'));
-    } finally {
-      db.close();
-    }
-  } catch {
-    return false;
-  }
-}
-
-// What "Download game" will fetch: the program, the data package and the sounds.
-async function downloadSize() {
-  try {
-    const length = async (path) => Number((await fetch(path, { method: 'HEAD', cache: 'no-store' })).headers.get('Content-Length')) || 0;
-    const list = fetch('audio/manifest.tsv', { cache: 'no-cache' }).then((response) => (response.ok ? response.text() : ''));
-    const [script, program, data, sounds] = await Promise.all([length('cortex.js'), length('cortex.wasm'), length('cortex.data'), list]);
-    const files = new Map();
-    for (const line of sounds.split('\n')) {
-      const fields = line.split('\t');
-      if (fields[4]) files.set(fields[4], Number(fields[1]));
-    }
-    return script + program + data + [...files.values()].reduce((sum, bytes) => sum + bytes, 0);
-  } catch {
-    return 0;
-  }
-}
-
-// The strip under the game: links, and a button that gives the game the whole screen.
+// The strip under the game: links, and how to give the game the whole screen, Ctrl+F.
 // The game's area goes fullscreen, not the page, so the strip is not shown there, and
 // Esc leaves as usual. SDL takes any fullscreen change on the page for its own window
 // going fullscreen and then ignores resizes (Emscripten_HandleFullscreenChange), which
 // would keep the game at its old size; kept from SDL, the change reaches it as a resize
 // and the game's resolution follows (notes/display.md).
 const game = document.getElementById('game');
-const fullscreen = document.getElementById('fullscreen');
 for (const type of ['fullscreenchange', 'webkitfullscreenchange']) game.addEventListener(type, (event) => event.stopPropagation());
-fullscreen.hidden = !document.fullscreenEnabled;
-// A focused button would also take the game's Space and Enter.
-fullscreen.addEventListener('mousedown', (event) => event.preventDefault());
-fullscreen.addEventListener('click', () => game.requestFullscreen().catch(() => {}).finally(() => canvas.focus()));
+document.getElementById('fullscreen-hint').hidden = !document.fullscreenEnabled;
+
+// Outside fullscreen, Ctrl+F is the page's: neither the browser's find nor the game sees
+// it, since this listener captures on the window, ahead of SDL's there. F is the key that
+// types f, or, on a layout whose letters are not Latin, the key in F's place. In
+// fullscreen the key is the game's again: in its default mouse-and-keyboard controls
+// Left Ctrl crouches and F picks up. The repeats of an F the page took are the page's
+// too, or SDL would take the first of them for a press (notes/display.md).
+const isCtrlF = (event) => event.ctrlKey && !event.altKey && !event.metaKey &&
+  (/^[a-z]$/i.test(event.key) ? event.key.toLowerCase() === 'f' : event.code === 'KeyF');
+let takenKey = '';
+window.addEventListener('keydown', (event) => {
+  if (!event.repeat) takenKey = document.fullscreenEnabled && !document.fullscreenElement && isCtrlF(event) ? event.code : '';
+  if (!takenKey || event.code !== takenKey) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (!event.repeat) game.requestFullscreen().catch(() => {});
+}, true);
 
 window.addEventListener('error', (event) => failure(event.message));
 if (Module.threadDiagnostics) setInterval(() => console.log('Engine stage: ' + Module.engineStage + ' visits=' + Module.engineStageVisits), 5000);
 
-(async () => {
-  if (!self.crossOriginIsolated) {
-    setState('unsupported');
-    status.textContent = 'This page cannot run the game: it must be served with cross-origin isolation (the Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers).';
-    return;
-  }
-  if (typeof WebAssembly.Suspending !== 'function') {
-    setState('unsupported');
-    status.textContent = 'This browser cannot run the game: it needs WebAssembly JSPI (Chrome 137 or newer).';
-    return;
-  }
-  if (await gameIsStored()) {
-    setState('offer-play');
-    offer('Play', () => {
-      playWhenReady = true;
-      load();
-    });
-    return;
-  }
-  setState('offer-download');
-  status.textContent = 'The game is downloaded once; your browser keeps it for later visits.';
-  offer('Download game', load);
-  const size = await downloadSize();
-  if (size && document.body.dataset.state === 'offer-download') button.textContent = `Download game (${megabytes(size)} MB)`;
-})();
+if (!self.crossOriginIsolated) {
+  setState('unsupported');
+  status.textContent = 'This page cannot run the game: it must be served with cross-origin isolation (the Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy headers).';
+} else if (typeof WebAssembly.Suspending !== 'function') {
+  setState('unsupported');
+  status.textContent = 'This browser cannot run the game: it needs WebAssembly JSPI (Chrome 137 or newer).';
+} else {
+  setState('offer-play');
+  offer('Play Game', load);
+}
 </script></body></html>
