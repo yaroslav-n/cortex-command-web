@@ -30,11 +30,18 @@ int main() {
         config.sampleRate = 48000;
         if (ma_engine_init(&config, &engine) != MA_SUCCESS) { std::puts("FAIL browser output initialization"); return 4; }
         if (ma_engine_play_sound(&engine, paths[0], nullptr) != MA_SUCCESS) { ma_engine_uninit(&engine); return 5; }
-        emscripten_sleep(1500);
+        // The browser's audio device can take more than a second to start on a slow
+        // machine (CI once rendered nothing in 1.5 s): wait up to 10 s for it to start,
+        // then require it to keep rendering.
+        ma_uint64 started = 0;
+        for (int waited = 0; waited < 10000 && (started = ma_engine_get_time_in_pcm_frames(&engine)) == 0; waited += 100) {
+            emscripten_sleep(100);
+        }
+        emscripten_sleep(500);
         auto frames = ma_engine_get_time_in_pcm_frames(&engine);
-        std::printf("Browser audio rendered %llu frames.\n", frames);
+        std::printf("Browser audio rendered %llu frames, then %llu half a second later.\n", started, frames);
         ma_engine_uninit(&engine);
-        if (frames == 0) return 6;
+        if (started == 0 || frames <= started) return 6;
     }
     std::puts("Audio decoder/output check passed.");
     return 0;
