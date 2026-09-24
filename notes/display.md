@@ -26,8 +26,9 @@ only ever disagree with it.
 ## How the window size reaches the engine
 
 1. `index.html` gives the canvas an explicit CSS size: it fills `#game`, which
-   covers the page above a 50 px strip (links, and a Fullscreen button). So the
-   game's "window" is the browser window less 50 px; in fullscreen it is the screen.
+   covers the page above a 50 px strip (links, and a note that Ctrl+F opens
+   fullscreen). So the game's "window" is the browser window less 50 px; in
+   fullscreen it is the screen.
 2. SDL3's Emscripten backend treats a **resizable** window whose canvas has an
    external CSS size as following that size: at creation it sizes the canvas
    backing store from the CSS size, and on every browser resize it re-reads it and
@@ -66,16 +67,49 @@ So the browser keeps `m_PreferredScale` — the player's choice — separately.
 ### The default is 2x
 
 A player with no saved settings starts at **scale 2**
-(`WindowMan::c_DefaultBrowserScale`): the canvas fills the browser window, and at
-1x a typical window gives a game resolution so large that the pixel art and text
-are tiny. Two places carry the default, and both are needed: `WindowMan::Clear()`
-sets `m_ResMultiplier` (what the game starts with when `Settings.ini` has no
-value), and `m_PreferredScale`'s member default is what the *first*
-`Settings.ini` is written with — `SettingsMan` overwrites the new file before the
-window exists. Miss the second and a fresh profile saves 1 and starts at 1 on its
-next visit. Verified in a fresh headless-Chrome profile: a 1600×900 canvas gives
-800×450 at scale 2, the saved file records `ResolutionMultiplier = 2.000000`, and
-the reload starts at 2. Players with a saved scale keep it.
+(`WindowMan::c_DefaultBrowserScale`; [the spec](../specs/settings.md)): the canvas
+fills the browser window, and at 1x a typical window gives a game resolution so
+large that the pixel art and text are tiny. Two places carry the default, and both
+are needed: `WindowMan::Clear()` sets `m_ResMultiplier` (what the game starts with
+when `Settings.ini` has no value), and `m_PreferredScale`'s member default is what
+the *first* `Settings.ini` is written with — `SettingsMan` overwrites the new file
+before the window exists. Miss the second and a fresh profile saves 1 and starts at
+1 on its next visit. Verified in a fresh headless-Chrome profile: a 1600×900 canvas
+gives 800×450 at scale 2, the saved file records `ResolutionMultiplier = 2.000000`,
+and the reload starts at 2.
+
+A scale is kept only once the player has chosen it. Every browser `Settings.ini` is
+written with `BrowserSettingsVersion = 1`; a file without it gets the default scale
+and is written again at boot (`SettingsMan::Initialize`). Its `ResolutionMultiplier`
+is no choice: files from before the 2x default hold that old default, 1, and until
+2026-09-24 the Video settings saved a scale by themselves (below). Such a file loses
+its scale once, even one a player did choose then; nothing tells the two apart.
+
+A window too short for the scale keeps it. Below 720 px of game area (a window under
+770 px tall, with the strip) 2x would take the game under the engine's 640×360
+minimum, so `ComputeWindowResolution` stops at the minimum and the image is fitted
+into the canvas, about 1.6x with bars at the sides in a 583 px area; a taller window
+gets true 2x again.
+
+### The scale list
+
+`PopulateResMultplierComboBox` offers the scales the canvas holds at the engine's
+minimum resolution, in halves from 1x, and also 2x and the player's own scale where
+it holds neither. The box shows the player's scale, `GetPreferredScale`. Closing the
+list applies the box's text (`ApplySelectedScale`), and `SetResolutionMultiplier`
+does nothing when that is the scale already chosen, so opening and closing the list
+changes nothing.
+
+It used to show `GetResMultiplier`, the fitted scale, and to offer only what the
+canvas held. In a window too short for 2x the box read "1.62x" and the list held 1x
+and 1.5x: merely opening and closing it saved 1.62 as the player's scale, and 2x
+could not be chosen again. The strip made such windows common.
+
+The scale list sits in the custom-resolution box, which the browser always shows.
+Its layout height, 80, covered "Enable VSync" below it, which then took no clicks; in
+the browser the box is only as tall as the list's closed box, 40, except while the
+list is open (`c_BrowserScaleBoxHeight`). VSync matters here:
+`BrowserWaitForFrame` paces on animation frames with it and on timers without.
 
 ## Resolution must not change under a live Activity
 
@@ -125,22 +159,35 @@ stays on its main screen.
 
 ## The strip under the game, and fullscreen
 
-The page keeps a 50 px black strip under the game (`#bar` in `site/index.html`):
-links to this port's repository and to the original's, and a Fullscreen button. The
-game's area (`#game`, the canvas and the start screen) is the window less the strip.
+The page keeps a 50 px black strip under the game (`#bar` in `site/index.html`): on
+the left "Based on Cortex Command Community Project" with a GitHub icon, linking to
+the original's repository; on the right "Open fullscreen by pressing Ctrl + F" and a
+GitHub icon alone, linking to this port's. The game's area (`#game`, the canvas and
+the start screen) is the window less the strip.
 
-Fullscreen puts `#game` alone on the screen, so the strip is not shown, and Esc
-leaves it: Chrome takes Esc in fullscreen for itself, before the page sees it (in
-headless Chrome, which has no such handling, the key reaches the game instead). The
-game's resolution follows the new size as for any resize, or is fitted to it under
-an Activity or a campaign (above).
+Ctrl+F puts `#game` alone on the screen, so the strip is not shown, and Esc leaves
+it: Chrome takes Esc in fullscreen for itself, before the page sees it (in headless
+Chrome, which has no such handling, the key reaches the game instead). The game's
+resolution follows the new size as for any resize, or is fitted to it under an
+Activity or a campaign (above).
 
 - SDL registers a `fullscreenchange` listener on the document and takes any
   fullscreen on the page for its own window going fullscreen
   (`Emscripten_HandleFullscreenChange`); it then ignores resizes, so the game kept
   its old size. The page stops the event at `#game`; SDL sees only the resize.
-- The button takes no focus (`mousedown` is prevented) and gives it back to the
-  canvas: a focused button would also receive the game's Space and Enter.
+- Ctrl+F is the page's only outside fullscreen. Its listener captures on the window,
+  so it runs before SDL's, which is on the window too but not capturing; it keeps
+  the key from the browser's find and stops it, so the game never sees the F, nor
+  the F's auto-repeats, the first of which SDL would take for a press. In fullscreen
+  the key is left to the game, where it means something: player one's default
+  controls (`PresetMouseWASDKeys`) make Left Ctrl crouch and F pick up. In the
+  window, crouching and picking up therefore opens fullscreen instead.
+- F is the key that types f, or, on a layout whose letters are not Latin, the key
+  in F's place (`KeyF`). Alt and Meta must be up: Cmd+F on a Mac stays the
+  browser's find, and AltGr+F, which Windows reports with Ctrl and Alt, is left alone.
+- Where the page cannot go fullscreen (`document.fullscreenEnabled` is false, as in
+  a frame without `allowfullscreen`) the note is hidden and Ctrl+F is the browser's.
+  Below 700 px the note is hidden too; Ctrl+F still works there.
 - A mouse button released over the strip still reaches the game — SDL listens for
   releases on the whole document — at the game's last cursor position.
 
@@ -199,14 +246,25 @@ Tall windows at 1x show more of it.
   the scale survives a reload.
 - Resizing the window at the menu refits live, with correct mouse mapping.
 - The strip: the game area is the window less 50 px (1280×583 in a 1280×633
-  window, from the canvas). Fullscreen at the main menu went to the headless
-  screen's 800×600 and back to 1280×583, staying on the main screen; on Conquest's
-  map it kept 1280×583 fitted into 800×600 (letterboxed) and then back, with the
-  campaign's turn intact and clicks landing where they should.
+  window, from the canvas). Fullscreen (then a button) at the main menu went to the
+  headless screen's 800×600 and back to 1280×583, staying on the main screen; on
+  Conquest's map it kept 1280×583 fitted into 800×600 (letterboxed) and then back,
+  with the campaign's turn intact and clicks landing where they should.
+- Ctrl+F, as DevTools key events: on the start screen `#game` went fullscreen. At
+  the main menu, with three auto-repeats of F, the game went to 800×600, and a
+  listener after SDL's saw Ctrl go down and F come up but no F go down; back in the
+  window the game returned to 1280×583. Pressed in fullscreen, the F reached the
+  game, with the browser's action prevented by SDL.
 - Resizing under the Scene Editor keeps its layout intact (fitted, with bars),
   clicks land correctly in the fitted menu, and the held resolution applies when
   the next Activity starts.
 - Loading screen at 2133 px wide: one card.
+- The scale list (2026-09-24, fresh headless profile, 1280×583 game area): the game
+  starts at 2x (640×360, fitted); the list offers 1x, 1.5x and 2x with 2x shown;
+  opening and closing it leaves the scale and the file alone; choosing 1.5x applies
+  at once and survives a reload. A file saved by the old build with 1.62 and no
+  `BrowserSettingsVersion` starts at 2 and is rewritten with both. "Enable VSync"
+  toggles, and its change is in the file within a second.
 
 Not tested: devicePixelRatio > 1 (the canvas is not high-density, so the browser
 upscales), and a resize during gameplay in a mission rather than an editor.

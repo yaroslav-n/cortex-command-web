@@ -6,6 +6,9 @@
 #include <list>
 #include <cmath>
 #include <algorithm>
+#ifdef __EMSCRIPTEN__
+#include <chrono>
+#endif
 
 #define g_SettingsMan SettingsMan::Instance()
 
@@ -42,6 +45,11 @@ namespace RTE {
 
 		/// Overwrites the settings file to save changes made from within the game.
 		void UpdateSettingsFile() const;
+
+#ifdef __EMSCRIPTEN__
+		/// Overwrites the settings file if any setting differs from what was last written; it compares at most four times a second. Upstream writes the file when the player leaves the settings screen, but a browser player can close the page at any moment, so the settings screens call this while they are open (specs/settings.md).
+		void UpdateSettingsFileIfChanged() const;
+#endif
 #pragma endregion
 
 #pragma region Engine Settings
@@ -363,6 +371,20 @@ namespace RTE {
 		static const std::string c_ClassName; //!< A string with the friendly-formatted type name of this.
 
 		std::string m_SettingsPath; //!< String containing the Path to the Settings.ini file.
+
+#ifdef __EMSCRIPTEN__
+		/// Written into every browser Settings.ini. A file without it holds no scale the player chose: its ResolutionMultiplier is the old 1x default, or a value the Video settings saved when the player only opened and closed the scale list. Such a file starts at the default scale.
+		static constexpr int c_BrowserSettingsVersion = 1;
+		int m_BrowserSettingsVersion; //!< The version the loaded Settings.ini was written with, 0 when it has none.
+		mutable std::string m_WrittenSettings; //!< What was last written to Settings.ini.
+		mutable std::chrono::steady_clock::time_point m_LastChangeCheck; //!< When UpdateSettingsFileIfChanged last compared the settings with the file.
+
+		/// The settings, formatted exactly as UpdateSettingsFile writes them.
+		std::string SerializeSettings() const;
+
+		/// Writes the given serialized settings to Settings.ini and remembers them.
+		void WriteSettingsFile(std::string settings) const;
+#endif
 
 		/// Clears all the member variables of this SettingsMan, effectively resetting the members of this abstraction level only.
 		void Clear();

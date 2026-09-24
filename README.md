@@ -14,7 +14,7 @@ adapted for the browser:
 | LuaJIT                      | Lua 5.1.5 interpreter with LuaBitOp                                                              |
 | files on disk               | game data preloaded into the browser filesystem, sounds fetched after the start; saves, settings and mods persisted in IndexedDB |
 | threads, blocking main loop | pthreads on Web Workers; the main loop suspends with WebAssembly JSPI                            |
-| resolution settings         | the game fills the window above a strip with links and a Fullscreen button; only the scale is chosen |
+| resolution settings         | the game fills the window above a strip with links; Ctrl+F gives it the whole screen; only the scale is chosen |
 | online multiplayer (RakNet) | not supported                                                                                    |
 
 How each of these works, what was compared against the original and how, and
@@ -38,9 +38,10 @@ python3 serve.py --port 8080     # then open http://127.0.0.1:8080/
 
 `dist/` then holds the whole app: `index.html`, `cortex.js`, `cortex.wasm`,
 `cortex.data` (the game data without its sounds, 52 MB) and `audio/` (the sounds,
-295 MB). Opening the page downloads none of it: the start screen offers "Download
-game (357 MB)", or "Play" when the browser kept the game from an earlier visit, and
-the sounds follow in the background once the rest has arrived. Host `dist/` anywhere
+295 MB). Opening the page downloads none of it: the start screen offers "Play Game",
+which downloads the program and the package the first time (the browser keeps them
+for later visits) and starts the game, and the sounds follow in the background once
+the rest has arrived. Host `dist/` anywhere
 that sends the two headers above; the test pages in it can be left out.
 
 To run every automated check (test programs, recorded outputs, the game booting
@@ -68,6 +69,7 @@ vendor/      Lua 5.1.5, LuaBitOp, miniaudio
 tests/       browser test programs and their pages
 tools/       toolchain setup, headless Chrome driver, comparison tools
 notes/       how the port works; notes/PORT-STATUS.md is the build log
+specs/       the rules the game and its page must keep (see AGENTS.md)
 ```
 
 ## Licence

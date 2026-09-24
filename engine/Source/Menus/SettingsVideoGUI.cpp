@@ -21,8 +21,19 @@
 #endif
 
 #include <set>
+#ifdef __EMSCRIPTEN__
+#include <algorithm>
+#include <vector>
+#endif
 
 using namespace RTE;
+
+#ifdef __EMSCRIPTEN__
+// In the browser the custom resolution box holds only the scale list, and is always
+// shown. At its layout height of 80 it lay over "Enable VSync", which then took no
+// clicks, so it is only as tall as the list's closed box.
+static constexpr int c_BrowserScaleBoxHeight = 40;
+#endif
 
 std::string SettingsVideoGUI::PresetResolutionRecord::GetDisplayString() const {
 #if __cpp_lib_format >= 201907L && !(defined(__APPLE__) && defined(__GNUC__)) //FIXME: macOS CI borken without this.
@@ -36,7 +47,14 @@ SettingsVideoGUI::SettingsVideoGUI(GUIControlManager* parentControlManager) :
     m_GUIControlManager(parentControlManager) {
 	m_NewResX = g_WindowMan.GetResX();
 	m_NewResY = g_WindowMan.GetResY();
+#ifdef __EMSCRIPTEN__
+	// What the player chose, which the scale box shows. GetResMultiplier is the fitted
+	// scale (1.62 when 2x is fitted into a short window), and closing the list applies
+	// the box's text, so showing it saved the fitted scale as the player's.
+	m_NewResMultiplier = g_WindowMan.GetPreferredScale();
+#else
 	m_NewResMultiplier = g_WindowMan.GetResMultiplier();
+#endif
 	m_NewFullscreen = g_WindowMan.IsFullscreen();
 
 	m_VideoSettingsBox = dynamic_cast<GUICollectionBox*>(m_GUIControlManager->GetControl("CollectionBoxVideoSettings"));
@@ -108,6 +126,7 @@ void SettingsVideoGUI::ConfigureForBrowser() {
 
 	m_CustomResolutionBox->SetVisible(true);
 	m_CustomResolutionBox->SetEnabled(true);
+	m_CustomResolutionBox->Resize(m_CustomResolutionBox->GetWidth(), c_BrowserScaleBoxHeight);
 	m_CustomResolutionMultiplierComboBox->Move(m_CustomResolutionBox->GetXPos() + 50, m_CustomResolutionBox->GetYPos() + 5);
 	PopulateResMultplierComboBox();
 }
@@ -251,23 +270,33 @@ void SettingsVideoGUI::PopulateResMultplierComboBox() {
 #endif
 	m_CustomResolutionMultiplierComboBox->ClearList();
 
-	int selectedIndex = 0;
-	int index = 0;
-	for (float resMultiplier = 1.0f; resMultiplier <= std::max(1.0F, maximumResMultiplier); resMultiplier += 0.5, ++index) {
+#ifdef __EMSCRIPTEN__
+	// The default scale and the player's own are offered even where the canvas cannot
+	// hold the minimum resolution at them: the game then fits the minimum resolution
+	// to the canvas and keeps the scale for a larger window. Without them a short
+	// window offered only 1x and 1.5x, so the default could not be kept or chosen again.
+	const float preferredScale = g_WindowMan.GetPreferredScale();
+	std::vector<float> scales;
+	for (float scale = 1.0F; scale <= std::max({1.0F, maximumResMultiplier, WindowMan::GetDefaultScale(), preferredScale}); scale += 0.5F) {
+		scales.push_back(scale);
+	}
+	if (std::find(scales.begin(), scales.end(), preferredScale) == scales.end()) {
+		scales.insert(std::upper_bound(scales.begin(), scales.end(), preferredScale), preferredScale);
+	}
+	for (int index = 0; index < static_cast<int>(scales.size()); ++index) {
+		m_CustomResolutionMultiplierComboBox->AddItem(std::format("{:.3g}x", scales[index]));
+		if (scales[index] == preferredScale) {
+			m_CustomResolutionMultiplierComboBox->SetSelectedIndex(index);
+		}
+	}
+#else
+	for (float resMultiplier = 1.0f; resMultiplier <= maximumResMultiplier; resMultiplier += 0.5) {
 #if __cpp_lib_format >= 201907L && !(defined(__APPLE__) && defined(__GNUC__))
 		m_CustomResolutionMultiplierComboBox->AddItem(std::format("{:.3g}x", resMultiplier));
 #else
 		m_CustomResolutionMultiplierComboBox->AddItem(std::to_string(resMultiplier));
 #endif
-#ifdef __EMSCRIPTEN__
-		if (resMultiplier == g_WindowMan.GetPreferredScale()) {
-			selectedIndex = index;
-		}
-#endif
 	}
-#ifdef __EMSCRIPTEN__
-	m_CustomResolutionMultiplierComboBox->SetSelectedIndex(selectedIndex);
-#else
 	m_CustomResolutionMultiplierComboBox->SetSelectedIndex(0);
 #endif
 }
@@ -454,9 +483,11 @@ void SettingsVideoGUI::HandleInputEvents(GUIEvent& guiEvent) {
 			if (guiEvent.GetMsg() == GUIComboBox::Dropped) {
 				m_CustomResolutionBox->Resize(m_CustomResolutionBox->GetWidth(), 165);
 			} else if (guiEvent.GetMsg() == GUIComboBox::Closed) {
-				m_CustomResolutionBox->Resize(m_CustomResolutionBox->GetWidth(), 80);
 #ifdef __EMSCRIPTEN__
+				m_CustomResolutionBox->Resize(m_CustomResolutionBox->GetWidth(), c_BrowserScaleBoxHeight);
 				ApplySelectedScale();
+#else
+				m_CustomResolutionBox->Resize(m_CustomResolutionBox->GetWidth(), 80);
 #endif
 			}
 		}

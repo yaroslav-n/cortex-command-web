@@ -328,6 +328,10 @@ bool ModManagerGUI::HandleInputEvents() {
 			}
 		}
 	}
+#ifdef __EMSCRIPTEN__
+	// Written as it changes, not only when the player leaves this screen (SettingsMan::UpdateSettingsFileIfChanged).
+	g_SettingsMan.UpdateSettingsFileIfChanged();
+#endif
 	return false;
 }
 

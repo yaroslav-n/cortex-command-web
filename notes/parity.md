@@ -316,7 +316,10 @@ with the same behaviour. These change what a player or a script can observe:
 
 | difference | why |
 | --- | --- |
-| Video settings offer only the scale; the resolution is the window's; no fullscreen toggle in the game (the page's Fullscreen button, or the browser's own, resizes the game instead) | the user's decision; see [display](display.md) |
+| Video settings offer only the scale; the resolution is the window's; no fullscreen toggle in the game (the page's Ctrl+F, or the browser's own fullscreen, resizes the game instead) | the user's decision; see [display](display.md) |
+| outside fullscreen, Ctrl+F opens fullscreen and never reaches the game: in player one's default controls that is crouch and pick up | the user's choice of key; see [display](display.md) |
+| settings are written to `Settings.ini` as they change, not when the player leaves the Settings or Mod Manager screen | the user's rule ([specs/settings.md](../specs/settings.md)): a page can be closed at any moment; see [files and saves](files-and-saves.md) |
+| a `Settings.ini` without `BrowserSettingsVersion` starts at the default 2x scale, whatever scale it holds | the user's rule: the old 1x default and scales the Video settings saved by themselves are not choices; see [display](display.md) |
 | no online play | removed at the user's request |
 | Exit (main menu) and Quit Program (Conquest's game menu) return to the page's start screen | the user's decision: a page cannot close its tab. Saves are written to IndexedDB first, then the page reloads (`BrowserReturnToStartScreen`, `index.html`'s `onExit`). The loop stops before drawing another frame: natively that frame, drawn on Conquest's map where no scene is loaded, trips `CameraMan::CheckOffset`'s assertion |
 | the orbiting station is drawn centred on its position | the user's request. The original rotates the sprite about its top-left corner (raylib's `DrawTextureEx`) placed on the station's position, so it floats half a sprite away from the point Conquest's "TradeStar Midas" income line and circle aim at |

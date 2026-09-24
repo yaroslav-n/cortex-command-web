@@ -103,6 +103,9 @@ namespace RTE {
 		/// SetViewportLetterboxed rewrites it on every resize — so it cannot also hold
 		/// the preference without drifting.
 		float GetPreferredScale() const { return m_PreferredScale; }
+
+		/// The scale a player starts at until they choose one (specs/settings.md).
+		static constexpr float GetDefaultScale() { return c_DefaultBrowserScale; }
 #endif
 
 		/// Gets whether VSync is enabled.

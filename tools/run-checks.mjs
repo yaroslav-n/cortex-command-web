@@ -10,10 +10,9 @@
 //     tests/check-report.js (window.checkResult);
 //   - the Node contracts, whose output must equal tests/golden/;
 //   - the game itself: its start screen downloads nothing until asked (and explains
-//     itself to a browser without JSPI, and offers a first download cut short as a
-//     download again), it boots to the main menu, every sound file it fetches after
-//     the start arrives, and the deterministic simulation harness reproduces its
-//     recorded state hashes.
+//     itself to a browser without JSPI), Ctrl+F there opens fullscreen, it boots to
+//     the main menu, every sound file it fetches after the start arrives, and the
+//     deterministic simulation harness reproduces its recorded state hashes.
 // --log prints each check's page output, which otherwise shows only on failure.
 // Build first: ./build.sh --target checks. Exit status is 0 only if every check passed.
 
@@ -56,13 +55,11 @@ const CHECKS = [
   { name: 'float-contract', node: 'float_contract.js', golden: 'tests/golden/float_contract.txt' },
   // The game.
   // Opening the page downloads none of the game: it offers to (site/index.html). Under
-  // the game, a 50 px strip holds links to this port and the original, and Fullscreen.
-  { name: 'start-screen', start: { expect: 'offer-download', label: /^Download game \(\d+ MB\)$/, strip: true } },
+  // the game, a 50 px strip links to the original and to this port and says that Ctrl+F
+  // opens fullscreen, which it then must.
+  { name: 'start-screen', start: { expect: 'offer-play', label: /^Play Game$/, strip: true } },
   // A browser without JSPI is told so and downloads nothing.
   { name: 'start-screen-no-jspi', start: { expect: 'unsupported', removeJspi: true } },
-  // A first download that never finished is offered again with its size, not as Play:
-  // the preload cache's database exists from the start of a download.
-  { name: 'start-screen-cut-short', start: { expect: 'offer-download', label: /^Download game \(\d+ MB\)$/, cutShort: true } },
   { name: 'game-boot', game: '', expect: /^Browser menu: entered$/, timeoutMs: 180000 },
   {
     name: 'simulate-tutorial',
@@ -291,20 +288,6 @@ async function runPage(connection, base, check) {
 async function runStartScreen(connection, base, check) {
   return withTab(connection, async (tab) => {
     if (check.start.removeJspi) await tab.send('Page.addScriptToEvaluateOnNewDocument', { source: 'delete WebAssembly.Suspending;' });
-    if (check.start.cutShort) {
-      // A first visit whose download never finishes: with the package's request blocked,
-      // the preload cache's database is created and nothing is stored in it, as when a
-      // player closes the tab mid-download. Then the player comes back.
-      await tab.send('Network.enable');
-      await tab.send('Network.setBlockedURLs', { urls: ['*/cortex.data'] });
-      await tab.send('Page.navigate', { url: `${base}/index.html` });
-      if (!(await waitFor(tab, "document.body.dataset.state === 'offer-download'", 30000))) return { status: 'fail', detail: 'the first visit offered no download', lines: tab.lines };
-      await tab.evaluate("document.getElementById('start').click()");
-      const created = "indexedDB.databases().then((databases) => databases.some((database) => database.name === 'EM_PRELOAD_CACHE'))";
-      if (!(await waitFor(tab, created, 30000))) return { status: 'fail', detail: 'the download never opened the preload cache', lines: tab.lines };
-      await tab.send('Network.setBlockedURLs', { urls: [] });
-      await tab.send('Page.navigate', { url: 'about:blank' });
-    }
     await tab.send('Page.navigate', { url: `${base}/index.html` });
     const state = await waitFor(tab, "!['checking', undefined].includes(document.body.dataset.state) && document.body.dataset.state", 30000);
     if (state !== check.start.expect) return { status: 'fail', detail: `the start screen is "${state}", expected "${check.start.expect}"`, lines: tab.lines };
@@ -317,18 +300,27 @@ async function runStartScreen(connection, base, check) {
     if (script || bytes > 2e6) return { status: 'fail', detail: `the start screen loaded the game (${script ? 'cortex.js, ' : ''}${(bytes / 1e6).toFixed(1)} MB)`, lines: tab.lines };
     if (check.start.strip) {
       const strip = JSON.parse(await tab.evaluate(`JSON.stringify({
-        links: [...document.querySelectorAll('#bar a')].map((link) => link.hostname + ' ' + link.target),
-        button: document.getElementById('fullscreen').textContent,
+        links: [...document.querySelectorAll('#bar a')].map((link) => link.hostname + link.pathname + ' ' + link.target + (link.querySelector('svg') ? ' icon' : '')),
+        credit: document.getElementById('credit').textContent,
+        hint: document.getElementById('fullscreen-hint').textContent,
         bar: document.getElementById('bar').getBoundingClientRect().height,
         game: document.getElementById('game').getBoundingClientRect().height,
         window: innerHeight })`));
       const links = strip.links.join(', ');
-      if (links !== 'github.com _blank, github.com _blank' || strip.button !== 'Fullscreen' || strip.bar !== 50 || strip.game !== strip.window - 50) {
+      const expected = 'github.com/cortex-command-community/Cortex-Command-Community-Project _blank icon, github.com/yaroslav-n/cortex-command-web _blank icon';
+      if (links !== expected || strip.credit !== 'Based on Cortex Command Community Project' || strip.hint !== 'Open fullscreen by pressing Ctrl + F' ||
+        strip.bar !== 50 || strip.game !== strip.window - 50) {
         return { status: 'fail', detail: `the strip under the game is not as expected: ${JSON.stringify(strip)}`, lines: tab.lines };
       }
+      // Ctrl+F, pressed as a player would, gives the game's area the whole screen.
+      for (const type of ['rawKeyDown', 'keyUp']) {
+        await tab.send('Input.dispatchKeyEvent', { type, modifiers: 2, key: 'f', code: 'KeyF', windowsVirtualKeyCode: 70 });
+      }
+      if (!(await waitFor(tab, "document.fullscreenElement?.id === 'game'", 5000))) return { status: 'fail', detail: 'Ctrl+F did not open fullscreen', lines: tab.lines };
+      await tab.evaluate('document.exitFullscreen()');
     }
     const text = await tab.evaluate("document.getElementById('status').textContent");
-    return { status: 'pass', detail: `${label || text} (${(bytes / 1e6).toFixed(2)} MB fetched)${check.start.strip ? ', strip under the game' : ''}`, lines: tab.lines };
+    return { status: 'pass', detail: `${label || text} (${(bytes / 1e6).toFixed(2)} MB fetched)${check.start.strip ? ', strip under the game, Ctrl+F fullscreen' : ''}`, lines: tab.lines };
   });
 }
 
@@ -336,18 +328,12 @@ async function runGame(connection, base, check) {
   return withTab(connection, async (tab) => {
     const navigated = Date.now();
     await tab.send('Page.navigate', { url: `${base}/index.html${check.game}` });
-    // The start screen offers "Download game" in a fresh profile, then "Play" once the
-    // game is loaded; when the browser already keeps the game it offers "Play" at once
-    // and starts as soon as it has loaded (site/index.html).
+    // The start screen offers "Play Game", which loads the game and starts it as soon as
+    // it has loaded (site/index.html).
     const state = "document.body.dataset.state";
-    const offered = await waitFor(tab, `['offer-download', 'offer-play'].includes(${state}) && ${state}`, 60000);
-    if (!offered) return { status: 'fail', detail: `the page offered no game (${await tab.evaluate(state)})`, lines: tab.lines };
+    if (!(await waitFor(tab, `${state} === 'offer-play'`, 60000))) return { status: 'fail', detail: `the page offered no game (${await tab.evaluate(state)})`, lines: tab.lines };
     await tab.evaluate("document.getElementById('start').click()");
-    if (offered === 'offer-download') {
-      if (!(await waitFor(tab, `${state} === 'ready'`, 120000))) return { status: 'fail', detail: 'the game never finished loading', lines: tab.lines };
-      await tab.evaluate("document.getElementById('start').click()");
-    }
-    if (!(await waitFor(tab, `${state} === 'running'`, 120000))) return { status: 'fail', detail: 'the game never started', lines: tab.lines };
+    if (!(await waitFor(tab, `${state} === 'running'`, 240000))) return { status: 'fail', detail: 'the game never started', lines: tab.lines };
     const played = Date.now();
     const deadline = Date.now() + check.timeoutMs;
     while (Date.now() < deadline) {
