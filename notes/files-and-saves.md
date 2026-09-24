@@ -90,30 +90,22 @@ Activity.
 Opening the page fetches none of the game. `site/index.html` first checks that the
 browser can run it — `crossOriginIsolated` (the page's COOP/COEP headers) and
 WebAssembly JSPI — and otherwise says which is missing and stops there. Then it
-offers **Download game (357 MB)**, the size added up from `HEAD` requests for
-`cortex.js`, `cortex.wasm` and `cortex.data` and from the sound list, or **Play**
-when the browser already keeps the data package (its record in `EM_PRELOAD_CACHE`,
-below). Only the button loads `cortex.js`, which fetches the program and the
-package; a player who asked to download it then presses Play, and a returning one's
-Play starts the game as soon as it has loaded. `body[data-state]` names the step
-(`checking`, `unsupported`, `offer-download`, `offer-play`, `loading`, `ready`,
-`running`, `failed`, `closed`) for the tools: `tools/run-checks.mjs` and the driver's
-`play` command go through it as a player would.
+offers **Play Game**, and says nothing else: no size, no note about downloading.
+Only the button loads `cortex.js`, which fetches the program and the package, and
+the game starts as soon as it has loaded. The first time, that is a download, whose
+progress shows under the title ("Downloading the game: 12 of 52 MB"); a returning
+player's comes from what the browser kept (below). `body[data-state]` names the
+step (`checking`, `unsupported`, `offer-play`, `loading`, `running`, `failed`,
+`closed`) for the tools: `tools/run-checks.mjs` and the driver's `play` command go
+through it as a player would.
 
-**What counts as kept** is the package's record, not the database. Emscripten's
-file packager creates `EM_PRELOAD_CACHE` before it downloads anything and writes a
-package's `METADATA` record only once every chunk is stored, so a first download
-cut short leaves the database empty. The page used to offer Play whenever the
-database existed: a player who closed the tab at 6 of 52 MB on a 50 Mbit/s link
-came back to Play, which downloaded all 357 MB again with no size shown. It now
-wants a record whose key is `metadata/`, then this page's directory URI-encoded
-(the packager's `PACKAGE_PATH`), then the package's name as built — an absolute
-path on the build machine, so the page matches the directory and not the whole
-key. A package stored by a page in another directory of the same site does not
-count either. `start-screen-cut-short` blocks the package's request, comes back,
-and requires the download again. After an update the record is the old build's,
-which the page cannot tell before `cortex.js` has loaded, so a returning player's
-Play then downloads the new package.
+Until 2026-09-24 a first visit was offered **Download game (357 MB)**, the size added
+up from `HEAD` requests and the sound list, and then Play; only a browser that kept
+the game was offered Play at once. Telling the two apart needed the package's
+`METADATA` record in `EM_PRELOAD_CACHE`, written for the page's own directory, not
+merely the database: the file packager creates the database before it downloads
+anything and writes the record only once every chunk is stored, so a first download
+cut short had come back as Play. With one button for both, the page no longer looks.
 
 It used to load `cortex.js` from the page itself, so anyone who opened the link, and
 a browser that was then told it could not run the game, downloaded everything;
@@ -127,10 +119,10 @@ profile, then the same profile again):
 
 | visit | fetched |
 | --- | --- |
-| opening the page, nothing pressed | 0.2 MB: the page, the sound list, three `HEAD` requests |
-| Download game, then Play | 358 MB: the program 11.6 MB, the package 51.6 MB, 2,160 sound files 295 MB |
+| opening the page, nothing pressed | the page alone (10 KB) |
+| Play Game | 358 MB: the program 11.6 MB, the package 51.6 MB, 2,160 sound files 295 MB |
 | returning, opening the page | nothing |
-| returning, Play | nothing: `cortex.js`, `cortex.wasm` and the sound list are revalidated (304), the package comes from IndexedDB and the sounds from Cache Storage |
+| returning, Play Game | nothing: `cortex.js`, `cortex.wasm` and the sound list are revalidated (304), the package comes from IndexedDB and the sounds from Cache Storage |
 
 The browser then keeps the package twice (IndexedDB, and the HTTP cache from
 Emscripten's own fetch, 61 MB with `cortex.wasm`) and the sounds once: they are
@@ -142,7 +134,7 @@ Through a 50 Mbit/s link with 20 ms latency:
 
 | | first visit | returning |
 | --- | --- | --- |
-| game loaded (from pressing Download / opening) | 10.8 s | — |
+| game loaded (from pressing Play Game) | 10.8 s | — |
 | main menu | 13.8 s | 2.6 s |
 | every sound here | 59.3 s | 2.8 s |
 
@@ -205,6 +197,27 @@ flushes because the filesystem is the page's, even when the engine runs in a
 worker. Checked in both builds: a file written from the Lua console into
 `UserSavedGames.rte`, then Escape at the main menu, was in IndexedDB after the
 reload.
+
+### Settings are written as they change
+
+Upstream writes `Userdata/Settings.ini` when the player leaves the Settings or Mod
+Manager screen (`HandleBackNavigation`), at boot, and on a few resolution changes.
+A browser player can close the page or reload it at any moment, which lost every
+change made since entering the screen. So both screens call
+`SettingsMan::UpdateSettingsFileIfChanged` every frame they are open, in the main
+menu and the pause menu alike: at most four times a second it serializes the
+settings exactly as the file is written and writes the file if they differ from
+what was last written. From there `autoPersist` takes it to IndexedDB within a
+frame. Nothing else in the game changes saved settings, apart from a command-line
+mode ([the spec](../specs/settings.md)).
+
+Checked in a fresh headless profile: "Enable VSync" off and "Skip intro" on were in
+the stored file a second after each click, with the Settings screen still open;
+a reload started from there, Back never pressed, came up with both, and with the
+scale chosen earlier.
+
+Every browser `Settings.ini` also carries `BrowserSettingsVersion`; a file without
+it has its scale reset to the default once ([display](display.md)).
 
 ## The persistence journal
 

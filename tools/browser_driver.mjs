@@ -380,15 +380,14 @@ async function runCommand(session, command, args) {
         console.log(JSON.stringify(await evaluate(session, args.join(' '))));
         break;
       case 'play': {
-        // Presses the start screen's button, as a player would, until the game runs:
-        // "Download game" first when the browser does not keep the game yet, then
-        // "Play" (site/index.html). Waits up to the given seconds (default 180).
+        // Presses the start screen's "Play Game", as a player would, and waits until the
+        // game runs (site/index.html). Waits up to the given seconds (default 180).
         const deadline = Date.now() + Number(args[0] || 180) * 1000;
         let state = '';
         while (Date.now() < deadline) {
           state = await evaluate(session, 'document.body.dataset.state');
           if (state === 'running' || state === 'failed' || state === 'unsupported') break;
-          if (state === 'offer-download' || state === 'offer-play' || state === 'ready') {
+          if (state === 'offer-play') {
             const [x, y] = await evaluate(session, "(() => { const r = document.getElementById('start').getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()");
             await mouse(session, 'mouseMoved', x, y);
             await sleep(60);

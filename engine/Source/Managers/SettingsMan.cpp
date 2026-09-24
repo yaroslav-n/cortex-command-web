@@ -10,6 +10,11 @@
 #include "UInputMan.h"
 #include "System.h"
 
+#ifdef __EMSCRIPTEN__
+#include <iomanip>
+#include <sstream>
+#endif
+
 using namespace RTE;
 
 const std::string SettingsMan::c_ClassName = "SettingsMan";
@@ -17,6 +22,9 @@ const std::string SettingsMan::c_ClassName = "SettingsMan";
 void SettingsMan::Clear() {
 	m_SettingsPath = System::GetUserdataDirectory() + "Settings.ini";
 	m_SettingsNeedOverwrite = false;
+#ifdef __EMSCRIPTEN__
+	m_BrowserSettingsVersion = 0;
+#endif
 
 	m_FlashOnBrainDamage = true;
 	m_BlipOnRevealUnseen = false;
@@ -84,6 +92,14 @@ int SettingsMan::Initialize() {
 
 	int failureCode = Serializable::Create(settingsReader);
 
+#ifdef __EMSCRIPTEN__
+	if (m_BrowserSettingsVersion < c_BrowserSettingsVersion) {
+		// Its scale is not one the player chose (c_BrowserSettingsVersion): start at the default, and write the file again once every manager is up.
+		g_WindowMan.m_ResMultiplier = WindowMan::c_DefaultBrowserScale;
+		m_SettingsNeedOverwrite = true;
+	}
+#endif
+
 	if (GetAnyExperimentalSettingsEnabled()) {
 		// Show a message box to annoy people as much as possible while they're using experimental settings, so they can't leave it on accidentally
 		RTEError::ShowMessageBox("Experimental settings are enabled!\nThis may break mods, crash the game, corrupt saves or worse.\nUse at your own risk.");
@@ -93,9 +109,42 @@ int SettingsMan::Initialize() {
 }
 
 void SettingsMan::UpdateSettingsFile() const {
+#ifdef __EMSCRIPTEN__
+	WriteSettingsFile(SerializeSettings());
+#else
 	Writer settingsWriter(m_SettingsPath);
 	g_SettingsMan.Save(settingsWriter);
+#endif
 }
+
+#ifdef __EMSCRIPTEN__
+void SettingsMan::UpdateSettingsFileIfChanged() const {
+	const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+	if (now - m_LastChangeCheck < std::chrono::milliseconds(250)) {
+		return;
+	}
+	m_LastChangeCheck = now;
+	if (std::string settings = SerializeSettings(); settings != m_WrittenSettings) {
+		WriteSettingsFile(std::move(settings));
+	}
+}
+
+std::string SettingsMan::SerializeSettings() const {
+	auto stream = std::make_unique<std::ostringstream>();
+	std::ostringstream& text = *stream;
+	// As Writer formats a file it opens.
+	text << std::fixed << std::setprecision(6);
+	Writer settingsWriter(std::move(stream));
+	Save(settingsWriter);
+	return text.str();
+}
+
+void SettingsMan::WriteSettingsFile(std::string settings) const {
+	Writer settingsWriter(m_SettingsPath);
+	*settingsWriter.GetStream() << settings;
+	m_WrittenSettings = std::move(settings);
+}
+#endif
 
 int SettingsMan::ReadProperty(const std::string_view& propName, Reader& reader) {
 	StartPropertyList(return Serializable::ReadProperty(propName, reader));
@@ -104,6 +153,9 @@ int SettingsMan::ReadProperty(const std::string_view& propName, Reader& reader) 
 	MatchProperty("ResolutionX", { reader >> g_WindowMan.m_ResX; });
 	MatchProperty("ResolutionY", { reader >> g_WindowMan.m_ResY; });
 	MatchProperty("ResolutionMultiplier", { reader >> g_WindowMan.m_ResMultiplier; });
+#ifdef __EMSCRIPTEN__
+	MatchProperty("BrowserSettingsVersion", { reader >> m_BrowserSettingsVersion; });
+#endif
 	MatchProperty("EnableVSync", { reader >> g_WindowMan.m_EnableVSync; });
 	MatchProperty("Fullscreen", { reader >> g_WindowMan.m_Fullscreen; });
 	MatchProperty("UseMultiDisplays", { reader >> g_WindowMan.m_UseMultiDisplays; });
@@ -212,6 +264,7 @@ int SettingsMan::Save(Writer& writer) const {
 #ifdef __EMSCRIPTEN__
 	// Save what the player chose, not the scale fitting happened to produce.
 	writer.NewPropertyWithValue("ResolutionMultiplier", g_WindowMan.m_PreferredScale);
+	writer.NewPropertyWithValue("BrowserSettingsVersion", c_BrowserSettingsVersion);
 #else
 	writer.NewPropertyWithValue("ResolutionMultiplier", g_WindowMan.m_ResMultiplier);
 #endif

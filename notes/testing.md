@@ -13,7 +13,7 @@ node tools/run-checks.mjs           # --list, --only a,b, --angle metal, --chrom
 
 `run-checks.mjs` serves `dist/` itself with the cross-origin isolation headers,
 starts its own headless Chrome with a fresh temporary profile at a fixed
-1280×720 window, and runs twenty checks in about fifty seconds:
+1280×720 window, and runs nineteen checks in about fifty seconds:
 
 - **test pages** — each Emscripten test program's page loads
   `tests/check-report.js`, which shows the output and turns the program's exit
@@ -24,30 +24,28 @@ starts its own headless Chrome with a fresh temporary profile at a fixed
 - **golden outputs** — `random_contract` and `float_contract` run under Node and
   must print exactly `tests/golden/`. The random contract's golden is also what the
   original's own generator (libstdc++, built with g++-13) prints;
-- **the game** — its start screen fetches none of it until asked and offers
-  "Download game" with a size and shows the strip under the game, two links and
-  Fullscreen, with the game's area 50 px shorter than the window (`start-screen`),
-  a browser without JSPI is told so
-  and fetches nothing (`start-screen-no-jspi`), a first download that never
-  finished is offered again with its size, not as Play (`start-screen-cut-short`),
-  it boots to the main menu, every
-  sound file it fetches after the start arrives (`sound-files`), and the serial
-  simulation harness reproduces its recorded result lines, state hash, object
-  count and random stream. Those depend on the window size, hence the fixed window,
-  and on the CPU count: the engine makes one Lua state per logical CPU, as the
-  original does, and seeds each from the random stream. The results were recorded
-  on a 12-CPU Mac, so the runner tells every page it has 12
-  (`Emulation.setHardwareConcurrencyOverride`); CI's 4-CPU machine otherwise drew
-  15 fewer numbers at startup. The worker build's engine thread reads its worker's
-  own count, which the override does not reach, so `--dist dist-worker` matches on
-  a 12-CPU machine only.
+- **the game** — its start screen fetches none of it until asked and offers "Play
+  Game", and shows the strip under the game, two links with GitHub icons and the
+  Ctrl+F note, with the game's area 50 px shorter than the window; Ctrl+F, sent as
+  key events, must then put the game's area in fullscreen (`start-screen`); a
+  browser without JSPI is told so and fetches nothing (`start-screen-no-jspi`); it
+  boots to the main menu, every sound file it fetches after the start arrives
+  (`sound-files`), and the serial simulation harness reproduces its recorded result
+  lines, state hash, object count and random stream. Those depend on the window
+  size, hence the fixed window, and on the CPU count: the engine makes one Lua state
+  per logical CPU, as the original does, and seeds each from the random stream. The
+  results were recorded on a 12-CPU Mac, so the runner tells every page it has 12
+  (`Emulation.setHardwareConcurrencyOverride`); CI's 4-CPU machine otherwise drew 15
+  fewer numbers at startup. The worker build's engine thread reads its worker's own
+  count, which the override does not reach, so `--dist dist-worker` matches on a
+  12-CPU machine only.
 
 It exits non-zero if anything fails, printing the failing check's last log lines.
 `--log` prints every check's output, each line stamped with the seconds since the
 page (for the game, since Play) started; test pages write their output to the
-console for this. The game checks press the start screen's buttons as a player
-would ("Download game" in the fresh profile, then "Play") and report how long after
-opening the page the game started and how long it then took to reach the result. `--dist DIR` runs against another build, for
+console for this. The game checks press the start screen's Play Game as a player
+would and report how long after opening the page the game started and how long it
+then took to reach the result. `--dist DIR` runs against another build, for
 instance `--dist dist-worker` after `./build.sh --worker --target checks`.
 The pages that need a person (`input-check`, `pointer-lock-check`, and
 `editor-storage-check`, which inspects what a manual editor save left behind) are
@@ -101,7 +99,7 @@ Measured example: in such a host the engine reported 3.04 ms of work per frame w
 
 ## The driver
 
-`tools/browser_driver.mjs` (wrapper `tools/cc.sh`) launches a headless Chrome with remote debugging and drives the page over the DevTools protocol. Chrome stays running between invocations; each command attaches to the existing page, so a loaded game survives across commands. Commands: `launch`, `kill`, `open <url>`, `url`, `eval <js>`, `play [seconds]`, `log [count] [regex]`, `shot <path> [x y w h scale]`, `move`, `click`, `drag`, `key`, `type`, `wait`, `batch "<cmd> …" …`. `play` presses the start screen's button as a player would until the game runs: "Download game" first in a browser that does not keep the game yet, then "Play".
+`tools/browser_driver.mjs` (wrapper `tools/cc.sh`) launches a headless Chrome with remote debugging and drives the page over the DevTools protocol. Chrome stays running between invocations; each command attaches to the existing page, so a loaded game survives across commands. Commands: `launch`, `kill`, `open <url>`, `url`, `eval <js>`, `play [seconds]`, `log [count] [regex]`, `shot <path> [x y w h scale]`, `move`, `click`, `drag`, `key`, `type`, `wait`, `batch "<cmd> …" …`. `play` presses the start screen's Play Game as a player would and waits until the game runs.
 
 Required Chrome flags are in `launch()`. Cross-origin isolation comes from `serve.py`, and `crossOriginIsolated`, `SharedArrayBuffer` and WebGL 2 are all available in this configuration. WebGL runs on SwiftShader by default, so draw cost is far higher than on a real GPU; treat draw timings from this environment as an upper bound, not as the browser port's true cost.
 
@@ -165,7 +163,7 @@ same script into the port on the driver's Chrome (use the Metal instance) and
 collects the port's. Scripts live in `tools/native-input/scripts/`; the format
 is at the top of `inject.c`. Coordinates are window points at 864×558 ×1.5, i.e.
 game pixels ×1.5. Waits are wall-clock from the first event poll (native) or the
-Play click (browser); the first wait must outlast both loads. The original runs
+Play Game click (browser); the first wait must outlast both loads. The original runs
 with VSync off (a locked screen never delivers the refresh a VSync'd swap waits
 for), so the injector paces its swaps to 60 a second (`CORTEX_INPUT_FPS`, default
 60, 0 for uncapped); uncapped, frame-rate-dependent behaviour such as the camera's
@@ -256,9 +254,9 @@ Escape on the main menu screen is Quit when no activity is running
 (`MainMenuGUI::HandleBackNavigation` to `ShowQuitScreenOrQuit`), the same as
 native, and so are Exit and Conquest's Quit Program. In the browser all of them
 return to the page's start screen: the loop stops, saves are flushed to
-IndexedDB, and `index.html` reloads the page, whose start screen offers Play. A driver
-that presses Escape once too often therefore finds itself back at Play, not in a
-dead page.
+IndexedDB, and `index.html` reloads the page, whose start screen offers Play Game. A
+driver that presses Escape once too often therefore finds itself back at Play Game,
+not in a dead page.
 
 `tools/boot.sh` opens the page, starts the game with `cc.sh play` and waits for the main menu. It never presses Escape: on the main menu that quits.
 
