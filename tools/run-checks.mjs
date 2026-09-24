@@ -31,6 +31,12 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 // depend on it (the title screen's star field is sized from the window), so the
 // recorded values below are for exactly this size and a fresh profile (scale 2).
 const VIEWPORT = { width: 1280, height: 720 };
+// The engine makes one Lua state per logical CPU, as the original does, and seeds each
+// from the simulation's random stream (LuaMan::Initialize), so the recorded simulation
+// results hold for the CPU count they were recorded with. Pages are told this many,
+// whatever the machine. The worker build's engine thread reads its worker's own count,
+// which this does not reach: its results hold on a 12-CPU machine only.
+const CPU_COUNT = 12;
 
 const CHECKS = [
   // Test programs that exit with status 0 when they pass.
@@ -250,6 +256,7 @@ async function withTab(connection, fn) {
     await tab.send('Runtime.enable');
     await tab.send('Page.enable');
     await tab.send('Emulation.setDeviceMetricsOverride', { ...VIEWPORT, deviceScaleFactor: 1, mobile: false });
+    await tab.send('Emulation.setHardwareConcurrencyOverride', { hardwareConcurrency: CPU_COUNT });
     return await fn(tab);
   } finally {
     connection.listeners.delete(listener);

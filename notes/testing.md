@@ -33,8 +33,14 @@ starts its own headless Chrome with a fresh temporary profile at a fixed
   it boots to the main menu, every
   sound file it fetches after the start arrives (`sound-files`), and the serial
   simulation harness reproduces its recorded result lines, state hash, object
-  count and random stream (the random-draw count depends on the window size, hence
-  the fixed window).
+  count and random stream. Those depend on the window size, hence the fixed window,
+  and on the CPU count: the engine makes one Lua state per logical CPU, as the
+  original does, and seeds each from the random stream. The results were recorded
+  on a 12-CPU Mac, so the runner tells every page it has 12
+  (`Emulation.setHardwareConcurrencyOverride`); CI's 4-CPU machine otherwise drew
+  15 fewer numbers at startup. The worker build's engine thread reads its worker's
+  own count, which the override does not reach, so `--dist dist-worker` matches on
+  a 12-CPU machine only.
 
 It exits non-zero if anything fails, printing the failing check's last log lines.
 `--log` prints every check's output, each line stamped with the seconds since the
