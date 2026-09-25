@@ -372,9 +372,13 @@ static bool RunDeterministicSimulation(int steps) {
 	// The serial run does the same work every time, which makes its duration a
 	// benchmark for the simulation code (printed on its own line; the result line
 	// below must stay exactly as it is, since tests compare it).
+	// Each step is measured as the game loop measures a sim update, so a run with the
+	// performance stats shown (?perf-debug) records what the overlay would show.
 	const auto simulationStart = std::chrono::steady_clock::now();
 	for (int step = 0; step < steps; ++step) {
+		g_PerformanceMan.NewPerformanceSample();
 		g_TimerMan.ForceOneSimUpdate();
+		g_PerformanceMan.StartPerformanceMeasurement(PerformanceMan::SimTotal);
 		g_LuaMan.Update();
 		g_FrameMan.Update();
 		g_MovableMan.CompleteQueuedMOIDDrawings();
@@ -385,6 +389,7 @@ static bool RunDeterministicSimulation(int steps) {
 		g_LuaMan.ClearScriptTimings();
 		g_MovableMan.Update();
 		g_ActivityMan.LateUpdateGlobalScripts();
+		g_PerformanceMan.StopPerformanceMeasurement(PerformanceMan::SimTotal);
 	}
 
 	// MOIDs are rebuilt on a pool thread when that phase is left parallel, and the
@@ -394,6 +399,18 @@ static bool RunDeterministicSimulation(int steps) {
 	g_ThreadMan.GetBackgroundThreadPool().wait_for_tasks();
 	const double simulationMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - simulationStart).count();
 	std::printf("Simulation time: %d steps in %.0f ms, %.2f ms per step\n", steps, simulationMs, simulationMs / steps);
+#ifdef __EMSCRIPTEN__
+	// What the overlay's counters recorded over the last ten steps, and its script timings
+	// in the last one. Hidden, it measures only the total and times no script.
+	long long scriptMicroseconds = 0;
+	int scriptCalls = 0;
+	for (const auto& [path, timing]: g_LuaMan.GetScriptTimings()) {
+		scriptMicroseconds += timing.m_Time;
+		scriptCalls += timing.m_CallCount;
+	}
+	std::printf("Performance counters (microseconds per step): %s; master state scripts: %d calls, %lld microseconds\n",
+	            g_PerformanceMan.DescribeCounterAverages().c_str(), scriptCalls, scriptMicroseconds);
+#endif
 
 	const unsigned long long draws = g_RandomGenerator.GetDrawCount();
 	const unsigned long long streamHash = g_RandomGenerator.GetDrawHash();
@@ -661,7 +678,14 @@ void RunGameLoop() {
 
 			g_LuaMan.ClearScriptTimings();
 			BrowserStage("g_MovableMan.Update();"); g_MovableMan.Update();
+#ifdef __EMSCRIPTEN__
+			// Only the performance overlay lists the script timings, and scripts are timed only while it measures.
+			if (g_PerformanceMan.IsMeasuringCounters()) {
+				g_PerformanceMan.UpdateSortedScriptTimings(g_LuaMan.GetScriptTimings());
+			}
+#else
 			g_PerformanceMan.UpdateSortedScriptTimings(g_LuaMan.GetScriptTimings());
+#endif
 
 			g_AudioMan.Update();
 			g_MusicMan.Update();
@@ -853,6 +877,9 @@ int main(int argc, char** argv) {
 	// A page cannot close its own tab, so quitting returns to the page's start
 	// screen (index.html reloads it). Anything a save just wrote is persisted to
 	// IndexedDB first; the native teardown is skipped, since the reload frees it all.
+	// Files scripts left open are closed as that teardown would (LuaMan::Destroy):
+	// IndexedDB takes a file only once it is closed.
+	g_LuaMan.FileCloseAll();
 	BrowserReturnToStartScreen();
 	emscripten_force_exit(EXIT_SUCCESS);
 #endif

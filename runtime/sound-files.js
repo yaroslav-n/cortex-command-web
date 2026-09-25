@@ -11,30 +11,59 @@
 // each copy is taken from the cache or downloaded, once, and written over the
 // stand-ins of every sound that uses it.
 //
+// A download that fails, or receives nothing for 20 seconds, is tried again later,
+// for as long as the page is open; a download that is slow but moving is never cut
+// short. When every recent try has failed, as in an outage, one file at a time is
+// tried, less and less often, until one arrives or the browser is back online.
+//
 // A sound played before its file is here waits, silent, and starts when the file
 // arrives; FMOD asks for that file ahead of the rest (Module.requestSoundFile,
 // runtime/fmod/system.cpp). An Activity only starts once every file is here
-// (Module.soundFilesComplete, ActivityMan::StartActivity), so a game always plays with
-// all of its sounds. See notes/files-and-saves.md.
+// (Module.soundFilesComplete, ActivityMan::StartActivity), so a game plays with all
+// of its sounds, unless nothing at all has arrived for three minutes: then the page
+// stops waiting, writes a marker over the stand-ins of the files still missing
+// (c_SoundFileFailed in runtime/fmod/internal.hpp), which FMOD plays as silence as
+// long as each sound (one that loops forever waits for its file instead), and keeps
+// trying them. See notes/files-and-saves.md.
 if (typeof window !== 'undefined') {
   (() => {
     const DIRECTORY = 'audio/';
     const CACHE = 'cortex-sounds';
     const PARALLEL = 6;
+    // A download that receives nothing for this long is dropped and tried again; the
+    // page stops waiting for the missing files once nothing at all has arrived for the
+    // second. tools/run-checks.mjs shortens both with ?sound-file-timeouts=<s>,<s>.
+    const timeouts = (new URLSearchParams(location.search).get('sound-file-timeouts') || '').split(',');
+    const STALL_MS = 1000 * (Number(timeouts[0]) || 20);
+    const GIVE_UP_MS = 1000 * (Number(timeouts[1]) || 180);
     // What a sound's file holds until it arrives: FMOD knows it (c_SoundFileOnItsWay in
     // runtime/fmod/internal.hpp), and it is not empty, which the engine would refuse.
     const ON_ITS_WAY = new TextEncoder().encode('cortex: this sound file is on its way\n');
+    // What it holds once the page has stopped waiting for it (c_SoundFileFailed).
+    const FAILED = new TextEncoder().encode('cortex: this sound file could not be downloaded\n');
     const byPath = new Map(); // engine path -> its download
-    const downloads = new Map(); // copy's URL -> { url, bytes, paths, state: 'waiting' | 'loading' | 'here' | 'failed' }
+    // copy's URL -> { url, bytes, paths, state: 'waiting' | 'loading' | 'here', tries, retryAt }
+    const downloads = new Map();
     const order = []; // the list's order, Base.rte first
     const urgent = []; // asked for by the engine
+    const retrying = new Set(); // failed at least once and not here yet, in the order they last failed
+    const attempts = new Set(); // the downloads under way, with when each last received bytes
     let active = 0;
     let remaining = 0;
     let loadedBytes = 0;
     let totalBytes = 0;
-    let failures = 0;
+    let soundsHere = 0;
+    let failedTries = 0;
+    let failStreak = 0; // tries that failed since a file last arrived
+    let probes = 0; // tries made one at a time since then, because every recent one failed
+    let nextProbeAt = 0; // when to make the next of those
+    let lastArrivalAt = 0; // moved on past any time the page did not run (tick)
+    let lastTickAt = 0;
+    let gaveUp = false;
+    let done = false;
     let started = false;
     let cache = null;
+    let timer = 0;
 
     Module.soundFilesComplete = false;
 
@@ -46,15 +75,23 @@ if (typeof window !== 'undefined') {
     const corner = 'left:12px;bottom:10px;padding:4px 8px;font-size:12px';
     const middle = 'left:50%;top:50%;transform:translate(-50%,-50%);padding:12px 20px;font-size:18px';
     let waitingForActivity = false;
+    const sounds = (set) => [...set].reduce((count, download) => count + download.paths.length, 0);
     const showProgress = () => {
-      if (Module.soundFilesComplete || !totalBytes) {
+      if (done || !totalBytes) {
         progress.style.display = 'none';
         return;
       }
-      const percent = Math.floor((100 * loadedBytes) / totalBytes);
-      progress.textContent = (waitingForActivity ? 'Loading sounds before the game starts: ' : 'Loading sounds: ') + percent + '%';
+      if (gaveUp) {
+        const missing = byPath.size - soundsHere;
+        progress.textContent = `${missing} sound${missing === 1 ? '' : 's'} could not be downloaded; still trying`;
+      } else {
+        const percent = Math.floor((100 * loadedBytes) / totalBytes);
+        const retries = sounds(retrying);
+        progress.textContent = (waitingForActivity ? 'Loading sounds before the game starts: ' : 'Loading sounds: ') + percent + '%' +
+          (retries ? `, ${retries} retrying` : '');
+      }
       progress.style.cssText = 'position:absolute;z-index:3;border-radius:3px;background:rgba(9,11,16,.8);color:#eac557;' +
-        'font-family:system-ui,sans-serif;pointer-events:none;' + (waitingForActivity ? middle : corner);
+        'font-family:system-ui,sans-serif;pointer-events:none;' + (waitingForActivity && !gaveUp ? middle : corner);
     };
     // The engine is waiting in ActivityMan::StartActivity for the last files.
     Module.showSoundFileWait = (waiting) => {
@@ -62,11 +99,17 @@ if (typeof window !== 'undefined') {
       showProgress();
     };
 
+    const report = () => {
+      const tried = failedTries ? `, ${failedTries} failed tries` : '';
+      console.log(`Sound files: ${soundsHere} here, ${byPath.size - soundsHere} failed, ${(totalBytes / 1e6).toFixed(1)} MB in ${downloads.size} downloads${tried}`);
+    };
+
     const finish = () => {
+      done = true;
+      clearInterval(timer);
       Module.soundFilesComplete = true;
       showProgress();
-      console.log(`Sound files: ${byPath.size} here, ${failures} failed, ${(totalBytes / 1e6).toFixed(1)} MB in ${downloads.size} downloads`);
-      if (failures) console.error(`Could not load ${failures} sound files; those sounds stay silent.`);
+      report();
       // Drop copies an earlier version of the game left in the cache.
       if (cache) {
         const current = new Set([...downloads.keys()].map((url) => new URL(url, location.href).href));
@@ -76,79 +119,173 @@ if (typeof window !== 'undefined') {
       }
     };
 
+    // A new file in place of the old, so that a read of the old one under way (from the
+    // engine's thread, in the worker build) finishes with the old contents.
     const write = (path, bytes, own) => {
       const slash = path.lastIndexOf('/');
       FS.unlink('/' + path);
       FS.createDataFile('/' + path.slice(0, slash), path.slice(slash + 1), bytes, true, true, own);
     };
 
-    const fetchCopy = async (download) => {
-      for (let attempt = 0; ; attempt++) {
-        try {
-          // Cache Storage keeps the copy; the HTTP cache would only keep a second one.
-          const response = await fetch(download.url, cache ? { cache: 'no-store' } : undefined);
-          if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-          return response;
-        } catch (error) {
-          if (attempt === 3) throw error;
-          await new Promise((resolve) => setTimeout(resolve, 1000 * 3 ** attempt));
+    // Nothing has arrived for GIVE_UP_MS: an Activity need not wait for the rest. Their
+    // sounds play as silence of their own length until they arrive, which is still tried.
+    const giveUp = () => {
+      gaveUp = true;
+      Module.soundFilesComplete = true;
+      for (const download of downloads.values()) {
+        if (download.state !== 'here') for (const path of download.paths) write(path, FAILED, false);
+      }
+      report();
+      console.error(`Could not download ${byPath.size - soundsHere} sound files; those sounds are silent until they arrive, which is still being tried.`);
+      showProgress();
+    };
+
+    // The cached copy, if it is there whole; one that cannot be read or has the wrong
+    // length is dropped.
+    const fromCache = async (download) => {
+      const response = cache && (await cache.match(download.url).catch(() => undefined));
+      if (!response) return null;
+      const bytes = await response.arrayBuffer().then((buffer) => new Uint8Array(buffer), () => null);
+      if (bytes && bytes.length === download.bytes) return bytes;
+      await cache.delete(download.url).catch(() => {});
+      return null;
+    };
+
+    const fromNetwork = async (download) => {
+      const attempt = { lastBytesAt: 0 };
+      const controller = new AbortController();
+      let watchdog = 0;
+      const watch = () => {
+        clearTimeout(watchdog);
+        watchdog = setTimeout(() => controller.abort(new Error(`nothing arrived for ${STALL_MS / 1000} s`)), STALL_MS);
+      };
+      attempts.add(attempt);
+      watch();
+      try {
+        // Cache Storage keeps the copy; the HTTP cache would only keep a second one.
+        const response = await fetch(download.url, { signal: controller.signal, ...(cache && { cache: 'no-store' }) });
+        if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+        // Read into one array of the listed size, which the file then owns.
+        const bytes = new Uint8Array(download.bytes);
+        const reader = response.body.getReader();
+        for (let length = 0; ; ) {
+          watch();
+          const { done: end, value } = await reader.read();
+          if (end) {
+            if (length !== bytes.length) throw new Error(`${length} bytes arrived, the list says ${download.bytes}`);
+            break;
+          }
+          if (length + value.length > bytes.length) throw new Error(`more than the ${download.bytes} bytes the list says`);
+          bytes.set(value, length);
+          length += value.length;
+          attempt.lastBytesAt = performance.now();
         }
+        // Only a whole copy is kept.
+        if (cache) cache.put(download.url, new Response(bytes)).catch(() => {});
+        return bytes;
+      } finally {
+        clearTimeout(watchdog);
+        controller.abort(); // ends a request that failed part way
+        attempts.delete(attempt);
       }
     };
 
     const load = async (download) => {
-      let response = cache ? await cache.match(download.url).catch(() => undefined) : undefined;
-      let bytes = response ? new Uint8Array(await response.arrayBuffer()) : null;
-      if (!bytes || bytes.length !== download.bytes) {
-        response = await fetchCopy(download);
-        if (cache) cache.put(download.url, response.clone()).catch(() => {});
-        bytes = new Uint8Array(await response.arrayBuffer());
-      }
-      if (bytes.length !== download.bytes) throw new Error(`${download.url} has ${bytes.length} bytes, the list says ${download.bytes}`);
+      const bytes = (await fromCache(download)) || (await fromNetwork(download));
       // The first sound owns the bytes; any other with the same contents gets a copy.
       download.paths.forEach((path, index) => write(path, index ? bytes.slice() : bytes, index === 0));
     };
 
-    const next = () => {
+    // The next download to try: one the engine asked for, then a retry that is due (the
+    // one that failed longest ago first), then the rest in the list's order. While every
+    // recent try has failed, one try is made at a time, when the next is due, to find out
+    // whether downloads work again: a file not tried yet, or else the retry that failed
+    // longest ago, due or not, so that a file that always fails cannot take every turn.
+    // A file the engine asked for goes at once even then.
+    const next = (now, probing) => {
       while (urgent.length) {
         const download = urgent.shift();
         if (download.state === 'waiting') return download;
       }
+      if (probing && now < nextProbeAt) return null;
+      if (!probing) {
+        for (const download of retrying) if (download.state === 'waiting' && download.retryAt <= now) return download;
+      }
       while (order.length) {
         const download = order.shift();
-        if (download.state === 'waiting') return download;
+        if (download.state === 'waiting' && !download.tries) return download;
+      }
+      if (probing) {
+        for (const download of retrying) if (download.state === 'waiting') return download;
       }
       return null;
     };
 
     const pump = () => {
-      for (let download; active < PARALLEL && (download = next()); ) {
+      const now = performance.now();
+      const probing = failStreak >= PARALLEL;
+      for (let download; active < (probing ? 1 : PARALLEL) && (download = next(now, probing)); ) {
+        if (probing) probes++;
         active++;
         download.state = 'loading';
         load(download)
           .then(() => {
             download.state = 'here';
+            retrying.delete(download);
+            remaining--;
+            loadedBytes += download.bytes;
+            soundsHere += download.paths.length;
+            failStreak = probes = 0;
+            lastArrivalAt = performance.now();
           })
           .catch((error) => {
-            download.state = 'failed';
-            failures += download.paths.length;
-            console.error(`Could not load the sound file ${download.url} (${download.paths.join(', ')}): ${error}`);
+            download.state = 'waiting';
+            download.tries++;
+            const delay = Math.min(60, 3 ** (download.tries - 1));
+            download.retryAt = performance.now() + 1000 * delay;
+            // To the end: the set is in the order the files last failed.
+            retrying.delete(download);
+            retrying.add(download);
+            failedTries++;
+            if (++failStreak >= PARALLEL) nextProbeAt = performance.now() + 1000 * Math.min(60, 3 ** probes);
+            console.warn(`Could not load the sound file ${download.url} (${download.paths.join(', ')}): ${error}; trying again in ${delay} s`);
           })
           .finally(() => {
             active--;
-            remaining--;
-            loadedBytes += download.bytes;
             showProgress();
             pump();
           });
       }
-      if (!remaining && !Module.soundFilesComplete) finish();
+      if (!remaining && !done) finish();
     };
+
+    // Once a second while files are missing: retries that are due, and the deadline,
+    // which counts from the last bytes of a download still under way or the last arrival.
+    // A hidden tab's timers can be held back for up to a minute, so ticks can be that far
+    // apart; a longer gap means the page did not run, as while the computer slept, and
+    // counts as a minute.
+    const tick = () => {
+      const now = performance.now();
+      const lastProgress = () => Math.max(lastArrivalAt, ...[...attempts].map((attempt) => attempt.lastBytesAt));
+      const late = now - lastTickAt - 60000;
+      if (late > 0) lastArrivalAt = Math.min(now, lastProgress() + late);
+      lastTickAt = now;
+      pump();
+      if (!gaveUp && remaining && now - lastProgress() >= GIVE_UP_MS) giveUp();
+    };
+
+    // The browser is back online: everything waiting is tried again at once.
+    window.addEventListener('online', () => {
+      for (const download of retrying) download.retryAt = 0;
+      failStreak = probes = 0;
+      if (started && !done) pump();
+    });
 
     // FMOD asks for a file it is about to play ahead of the rest.
     Module.requestSoundFile = (path) => {
       const download = byPath.get(path);
       if (!download || download.state !== 'waiting') return;
+      download.retryAt = 0;
       urgent.push(download);
       if (started) pump();
     };
@@ -169,7 +306,7 @@ if (typeof window !== 'undefined') {
             const url = DIRECTORY + name;
             let download = downloads.get(url);
             if (!download) {
-              download = { url, bytes: Number(bytes), paths: [], state: 'waiting' };
+              download = { url, bytes: Number(bytes), paths: [], state: 'waiting', tries: 0, retryAt: 0 };
               downloads.set(url, download);
               order.push(download);
               remaining++;
@@ -189,6 +326,8 @@ if (typeof window !== 'undefined') {
     Module.postRun.push(async () => {
       cache = typeof caches === 'undefined' ? null : await caches.open(CACHE).catch(() => null);
       started = true;
+      lastArrivalAt = lastTickAt = performance.now();
+      timer = setInterval(tick, 1000);
       showProgress();
       pump();
     });

@@ -244,6 +244,133 @@ static void verifyLateSoundFile(){
  check(system->release()==FMOD_OK,"late sound teardown");
  std::remove("/audio-manifest.tsv");
 }
+// Every frame a playback source produces until it has nothing left, including the final lookahead frame.
+static ma_uint64 countSourceFrames(FMOD::PlaybackSource& source){
+ std::array<float,1024> block{};ma_uint64 total=0;
+ for(;;){ma_uint64 read=0;ma_data_source_read_pcm_frames(&source.base,block.data(),512,&read);total+=read;if(read<512)return total;}
+}
+// Plays the sound at this pitch until it reports its end, and on for a while after, calling
+// update every 128 frames throughout.
+static std::vector<float> renderPlay(FMOD::System* system,FMOD::Sound* sound,float pitch){
+ ended=0;FMOD::Channel* channel=nullptr;check(system->playSound(sound,nullptr,true,&channel)==FMOD_OK,"a play is accepted");
+ channel->setCallback(onEnd);channel->setPitch(pitch);channel->setPaused(false);
+ std::vector<float> output;std::array<float,256> block{};
+ auto render=[&]{check(cortex_audio_render_test(system,block.data(),128)==0,"play render");output.insert(output.end(),block.begin(),block.end());system->update();};
+ while(ended==0){render();check(output.size()<48000*2*30,"a play ends");}
+ for(int i=0;i<32;++i)render();
+ return output;
+}
+// The page stops waiting for a file it cannot download (it keeps trying) and writes
+// c_SoundFileFailed over its stand-in. The sound must still play and end as it would
+// have: silence exactly as long as the sound, loops and pitch included, one end
+// callback, and the channel freed. A channel already waiting for the file does the
+// same from that moment. A sound that loops forever goes on waiting instead, since it
+// would never end anyway. Once the bytes arrive after all, the next play sounds as a
+// sound that was there all along.
+static void verifyFailedSoundFile(){
+ // The silence is exactly as long as what the decoder makes of the file, at every sample rate the game's sounds use.
+ writeSweepWav("/tmp/failed-source.wav",11025);
+ for(uint32_t rate:{11025u,16000u,32000u,43989u,44110u,44150u,48000u,96000u}){
+  char path[64];std::snprintf(path,sizeof(path),"/tmp/tone-%u.wav",rate);
+  FILE* file=std::fopen(path,"wb");check(file!=nullptr,"tone WAV create");
+  auto word=[&](uint32_t value,int bytes){for(int i=0;i<bytes;++i)std::fputc((value>>(8*i))&255,file);};
+  const uint32_t frames=rate/3+17;
+  std::fwrite("RIFF",1,4,file);word(36+frames*2,4);std::fwrite("WAVEfmt ",1,8,file);
+  word(16,4);word(1,2);word(1,2);word(rate,4);word(rate*2,4);word(2,2);word(16,2);
+  std::fwrite("data",1,4,file);word(frames*2,4);for(uint32_t i=0;i<frames;++i)word(static_cast<uint16_t>(static_cast<int16_t>(std::lround(std::sin(i*0.05)*20000))),2);
+  std::fclose(file);
+ }
+ FMOD::System* system=nullptr;check(FMOD::System_Create(&system)==FMOD_OK,"failed sound system create");
+ check(system->init(32,FMOD_INIT_MIX_FROM_UPDATE,nullptr)==FMOD_OK,"failed sound mixer init");
+ for(const char* path:{"/audio/PistolFire.flac","/audio/OneShot.ogg","/tmp/failed-source.wav","/tmp/tone-11025.wav","/tmp/tone-16000.wav","/tmp/tone-32000.wav","/tmp/tone-43989.wav","/tmp/tone-44110.wav","/tmp/tone-44150.wav","/tmp/tone-48000.wav","/tmp/tone-96000.wav"}){
+  FMOD::Sound* sound=nullptr;check(system->createSound(path,FMOD_2D,nullptr,&sound)==FMOD_OK,"length reference sound");
+  FMOD::PlaybackSource decoded;check(decoded.Initialize(FMOD::ReadWholeFile(path))==FMOD_OK,"length reference decoder");
+  FMOD::PlaybackSource silent;check(silent.InitializeSilent(FMOD::MixLength(*sound->state))==FMOD_OK,"silent source");
+  const ma_uint64 decodedFrames=countSourceFrames(decoded),silentFrames=countSourceFrames(silent);
+  std::printf("Failed sound file, %s (%u Hz, %llu frames): silence of %llu frames, the decoder makes %llu\n",path+1,sound->state->sampleRate,
+              static_cast<unsigned long long>(sound->state->frames),static_cast<unsigned long long>(silentFrames),static_cast<unsigned long long>(decodedFrames));
+  check(silentFrames==decodedFrames,"a failed sound's silence is as long as the decoded sound");
+ }
+ const std::vector<unsigned char> real=readFile("/tmp/failed-source.wav");check(!real.empty(),"failed source bytes");
+ for(const char* path:{"/tmp/failed-sound.wav","/tmp/forever-sound.wav"}){FILE* standIn=std::fopen(path,"wb");check(standIn!=nullptr,"stand-in create");std::fputs(FMOD::c_SoundFileOnItsWay,standIn);std::fclose(standIn);}
+ {FILE* list=std::fopen("/audio-manifest.tsv","w");check(list!=nullptr,"sound file list create");
+  std::fprintf(list,"tmp/failed-sound.wav\t%zu\t11025\t44100\tfailed.wav\ntmp/forever-sound.wav\t%zu\t11025\t44100\tforever.wav\n",real.size(),real.size());std::fclose(list);}
+ EM_ASM({ Module['requestedSoundFiles']=[]; Module['requestSoundFile']=(path)=>Module['requestedSoundFiles'].push(path); });
+ check(system->release()==FMOD_OK,"length teardown");
+ check(FMOD::System_Create(&system)==FMOD_OK,"failed sound system create");
+ check(system->init(32,FMOD_INIT_MIX_FROM_UPDATE,nullptr)==FMOD_OK,"failed sound mixer init");
+ FMOD::Sound* failed=nullptr;check(system->createSound("/tmp/failed-sound.wav",FMOD_2D,nullptr,&failed)==FMOD_OK,"a listed sound");
+ FMOD::Sound* present=nullptr;check(system->createSound("/tmp/failed-source.wav",FMOD_2D,nullptr,&present)==FMOD_OK,"reference sound");
+ const std::vector<float> reference=renderPlay(system,present,1);
+ auto silentThroughout=[](const std::vector<float>& samples){for(float v:samples)if(v!=0)return false;return true;};
+ // A channel waits for the file; the page gives up on it.
+ ended=0;FMOD::Channel* channel=nullptr;check(system->playSound(failed,nullptr,false,&channel)==FMOD_OK,"a waiting sound plays");channel->setCallback(onEnd);
+ std::array<float,256> block{};
+ for(int i=0;i<24;++i){check(cortex_audio_render_test(system,block.data(),128)==0,"waiting render");system->update();}
+ check(ended==0,"a waiting sound does not end");
+ {FILE* file=std::fopen("/tmp/failed-sound.wav","wb");std::fputs(FMOD::c_SoundFileFailed,file);std::fclose(file);}
+ std::this_thread::sleep_for(std::chrono::milliseconds(60));system->update();
+ std::vector<float> gaveUp;
+ auto render=[&]{check(cortex_audio_render_test(system,block.data(),128)==0,"failed render");gaveUp.insert(gaveUp.end(),block.begin(),block.end());system->update();};
+ while(ended==0){render();check(gaveUp.size()<48000*2*10,"a failed sound ends");}
+ for(int i=0;i<32;++i)render();
+ int playing=-1;system->getChannelsPlaying(&playing);
+ std::printf("Failed sound file, waiting channel: %zu frames of silence against %zu of the sound, %d end callbacks, %d channels playing after\n",gaveUp.size()/2,reference.size()/2,ended,playing);
+ check(silentThroughout(gaveUp)&&gaveUp.size()==reference.size(),"a waiting channel whose file failed is silent as long as the sound");
+ check(ended==1&&playing==0,"a waiting channel whose file failed ends once and is freed");
+ // Later plays are silent for the sound's length too, loops and pitch included.
+ check(failed->setLoopCount(2)==FMOD_OK&&present->setLoopCount(2)==FMOD_OK,"loop counts");
+ const std::vector<float> loopedReference=renderPlay(system,present,1.5f);
+ const std::vector<float> looped=renderPlay(system,failed,1.5f);
+ system->getChannelsPlaying(&playing);
+ std::printf("Failed sound file, played three times at pitch 1.5: %zu frames of silence against %zu of the sound, %d end callbacks, %d channels playing after\n",looped.size()/2,loopedReference.size()/2,ended,playing);
+ check(silentThroughout(looped)&&looped.size()==loopedReference.size(),"a failed sound is silent as long as the sound, loops and pitch included");
+ check(ended==1&&playing==0,"a failed sound's channel ends once and is freed");
+ const int requested=EM_ASM_INT({ return Module['requestedSoundFiles'].length===1 && Module['requestedSoundFiles'][0]==='tmp/failed-sound.wav' ? 1 : 0; });
+ check(requested==1,"the failed file is asked for once, by its engine path");
+ // A sound that loops forever would never end, silent or not, so it goes on waiting for
+ // its file, on a channel that was waiting when the page gave up and on a play after
+ // that, and starts once the file arrives. Told to stop looping while it waits, it
+ // becomes the silence of one play of the sound, and ends.
+ FMOD::Sound* forever=nullptr;check(system->createSound("/tmp/forever-sound.wav",FMOD_2D,nullptr,&forever)==FMOD_OK&&forever->setLoopCount(-1)==FMOD_OK,"a listed sound that loops forever");
+ ended=0;FMOD::Channel* before=nullptr;check(system->playSound(forever,nullptr,false,&before)==FMOD_OK,"a sound that loops forever plays");before->setCallback(onEnd);
+ {FILE* file=std::fopen("/tmp/forever-sound.wav","wb");std::fputs(FMOD::c_SoundFileFailed,file);std::fclose(file);}
+ std::this_thread::sleep_for(std::chrono::milliseconds(60));system->update();
+ FMOD::Channel* after=nullptr;check(system->playSound(forever,nullptr,false,&after)==FMOD_OK,"a sound that loops forever plays after the page gave up");after->setCallback(onEnd);
+ std::vector<float> waited;
+ for(int i=0;i<96;++i){check(cortex_audio_render_test(system,block.data(),128)==0,"forever render");waited.insert(waited.end(),block.begin(),block.end());system->update();}
+ std::this_thread::sleep_for(std::chrono::milliseconds(60));system->update();
+ system->getChannelsPlaying(&playing);
+ check(silentThroughout(waited)&&ended==0&&playing==2,"a failed sound that loops forever goes on waiting");
+ check(before->setLoopCount(0)==FMOD_OK,"stop looping");
+ std::this_thread::sleep_for(std::chrono::milliseconds(60));system->update();
+ std::vector<float> stopped;
+ while(ended==0){check(cortex_audio_render_test(system,block.data(),128)==0,"stopped render");stopped.insert(stopped.end(),block.begin(),block.end());system->update();check(stopped.size()<48000*2*10,"a failed sound told to stop looping ends");}
+ for(int i=0;i<32;++i){check(cortex_audio_render_test(system,block.data(),128)==0,"stopped render");stopped.insert(stopped.end(),block.begin(),block.end());system->update();}
+ system->getChannelsPlaying(&playing);
+ std::printf("Failed sound file, looping forever: waiting, then told to stop looping, %zu frames of silence against %zu of the sound, %d end callbacks, %d channels playing after\n",stopped.size()/2,reference.size()/2,ended,playing);
+ check(silentThroughout(stopped)&&stopped.size()==reference.size()&&ended==1&&playing==1,"a failed sound told to stop looping is silent as long as the sound and ends once");
+ {FILE* file=std::fopen("/tmp/forever-sound.wav","wb");std::fwrite(real.data(),1,real.size(),file);std::fclose(file);}
+ std::this_thread::sleep_for(std::chrono::milliseconds(60));system->update();
+ std::vector<float> heard;
+ for(int i=0;i<64;++i){check(cortex_audio_render_test(system,block.data(),128)==0,"forever arrived render");heard.insert(heard.end(),block.begin(),block.end());system->update();}
+ size_t foreverDiffering=0;for(size_t i=0;i<heard.size();++i)foreverDiffering+=heard[i]!=reference[i];
+ check(after->setLoopCount(0)==FMOD_OK,"stop looping");
+ for(size_t frames=0;ended<2;frames+=128){check(cortex_audio_render_test(system,block.data(),128)==0,"forever end render");system->update();check(frames<48000*10,"an arrived sound told to stop looping ends");}
+ system->getChannelsPlaying(&playing);
+ std::printf("Failed sound file, looping forever, then arrived: %zu frames against the sound's first, %zu samples differ, %d end callbacks once told to stop looping, %d channels playing after\n",heard.size()/2,foreverDiffering,ended,playing);
+ check(foreverDiffering==0&&ended==2&&playing==0,"a failed sound that loops forever is heard once its file arrives");
+ // The bytes arrive after all: the next play is the sound itself.
+ check(failed->setLoopCount(0)==FMOD_OK&&present->setLoopCount(0)==FMOD_OK,"loop counts");
+ {FILE* file=std::fopen("/tmp/failed-sound.wav","wb");std::fwrite(real.data(),1,real.size(),file);std::fclose(file);}
+ const std::vector<float> arrived=renderPlay(system,failed,1);
+ size_t differing=0;for(size_t i=0;i<std::min(arrived.size(),reference.size());++i)differing+=arrived[i]!=reference[i];
+ std::printf("Failed sound file, then arrived: %zu frames against %zu, %zu samples differ\n",arrived.size()/2,reference.size()/2,differing);
+ check(arrived.size()==reference.size()&&differing==0,"a failed sound whose file then arrived sounds as one that was there");
+ check(system->release()==FMOD_OK,"failed sound teardown");
+ std::remove("/audio-manifest.tsv");
+ ended=0;
+}
 // FMOD never refuses a sound because its channels are all playing: it steals the least
 // important channel (the highest priority number), the oldest of those, and reports the
 // stolen one as ended. The engine used a failed play's channel pointer regardless.
@@ -302,6 +429,7 @@ int main(){
  verifyChannelStealing();
  verifyDecodedCache();
  verifyLateSoundFile();
+ verifyFailedSoundFile();
  verifyNestedPause();
  verifyVolumeRamp();
  verifyLimiter();

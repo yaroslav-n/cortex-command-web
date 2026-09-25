@@ -274,6 +274,10 @@ void WindowMan::Initialize() {
 	ImGui_ImplOpenGL3_NewFrame();
 	ImGui_ImplSDL3_NewFrame();
 	ImGui::NewFrame();
+#ifdef __EMSCRIPTEN__
+	// Linking ScreenBlit waits for the GPU process too; see InitializeOpenGL.
+	BrowserCooperativeYield();
+#endif
 
 	CreateBackBufferTexture();
 	m_ScreenBlitShader = std::make_unique<Shader>(g_PresetMan.GetFullModulePath("Base.rte/Shaders/ScreenBlit.vert"), g_PresetMan.GetFullModulePath("Base.rte/Shaders/ScreenBlit.frag"));
@@ -394,6 +398,13 @@ void WindowMan::InitializeOpenGL() {
 	SDL_GL_SetSwapInterval(m_Fullscreen && m_EnableVSync ? 1 : 0);
 #endif
 
+#ifdef __EMSCRIPTEN__
+	// Creating the context and linking the first programs (rlgl's default shader
+	// next, then ImGui's and ScreenBlit in Initialize) each wait for the GPU
+	// process, and on a first start, with nothing in its shader caches, they took
+	// half a second or more with no return to the browser. Let it in between them.
+	BrowserCooperativeYield();
+#endif
 	rlLoadExtensions((void*)SDL_GL_GetProcAddress);
 	rlglInit(m_ResX, m_ResY);
 

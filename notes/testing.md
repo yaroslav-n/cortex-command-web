@@ -1,6 +1,6 @@
 # Running and observing the browser game
 
-Updated 2026-09-24. Entry points: `tools/run-checks.mjs`, `tests/check-report.js`,
+Updated 2026-09-25. Entry points: `tools/run-checks.mjs`, `tests/check-report.js`,
 `tests/golden/`, `.github/workflows/ci.yml`, `tools/browser_driver.mjs`,
 `tools/cc.sh`, `serve.py`, `site/index.html`.
 
@@ -13,7 +13,9 @@ node tools/run-checks.mjs           # --list, --only a,b, --angle metal, --chrom
 
 `run-checks.mjs` serves `dist/` itself with the cross-origin isolation headers,
 starts its own headless Chrome with a fresh temporary profile at a fixed
-1280×720 window, and runs nineteen checks in about fifty seconds:
+1280×720 window, and runs thirty-nine checks in about two and a half minutes on a
+12-CPU Mac (about 30 s of it the two sound download checks that go through a bad
+network, and a little over a minute the checks that break the game's own download):
 
 - **test pages** — each Emscripten test program's page loads
   `tests/check-report.js`, which shows the output and turns the program's exit
@@ -29,8 +31,16 @@ starts its own headless Chrome with a fresh temporary profile at a fixed
   the bug link and the Ctrl+F note), with the game's area 50 px shorter than the
   window; Ctrl+F, sent as key events, must then put the game's area in fullscreen
   (`start-screen`); a browser without JSPI is told so and fetches nothing
-  (`start-screen-no-jspi`); it boots to the main menu, every sound file it fetches
-  after the start arrives (`sound-files`), and the serial simulation harness
+  (`start-screen-no-jspi`); it boots to the main menu; the 21 transparency tables it
+  builds at startup, several at a time on the thread pool, hash under `?perf-debug`
+  to what upstream's serial loop made (`colour-tables`; see [rendering](rendering.md));
+  every sound file it fetches after the start arrives (`sound-files`), also through a
+  bad network that the runner's own server makes: downloads refused, never answered
+  or cut off are tried again until every file is here, and one that is never found
+  does not hold up the rest while the page tries one file at a time
+  (`sound-files-faults`), and with two files blocked an Activity starts once the page
+  stops waiting for them, which then arrive (`sound-files-deadline`; see
+  [files and saves](files-and-saves.md)); and the serial simulation harness
   reproduces its recorded result lines, state hash, object count and random stream.
   Those depend on the window size, hence the fixed window, and on the CPU count: the
   engine makes one Lua state per logical CPU, as the original does, and seeds each
@@ -38,7 +48,40 @@ starts its own headless Chrome with a fresh temporary profile at a fixed
   tells every page it has 12 (`Emulation.setHardwareConcurrencyOverride`); CI's
   4-CPU machine otherwise drew 15 fewer numbers at startup. The worker build's
   engine thread reads its worker's own count, which the override does not reach, so
-  `--dist dist-worker` matches on a 12-CPU machine only.
+  `--dist dist-worker` matches on a 12-CPU machine only. The harness also prints
+  what the performance overlay's counters recorded and how long the master Lua
+  state's script calls took (see "In-engine diagnostics" below). With the overlay
+  hidden, only the counters' total may have recorded anything and no call may have
+  been timed (`simulate-dummy-assault`, and `simulate-zero-g`: One-Man Army
+  (Zero-G), whose automover controller and node run their scripts in the master
+  state, two calls a step). With it shown (`simulate-overlay-shown`, the Zero-G run
+  with `?perf-debug`), every counter but the particles' (the mission has next to no
+  particles) and those two calls must have been timed, and the result must be the
+  same;
+- **the game's download** — the runner's own server answers `Range` requests as a
+  host does (206, with an `ETag`, honouring `If-Range`; 416 when nothing is left), and
+  a check can break the game's requests there (`FAULTS`), in the middle of a body too,
+  which the DevTools protocol cannot. Every request for `cortex.data` answered 503 must
+  end, after five tries, in the page's reason (`package-unavailable`), and so must a
+  server that sends the whole package whatever is asked and breaks off at the same
+  place every time (`package-cut-always`); a package with one byte changed is
+  downloaded twice, refused, and nothing is kept (`package-tampered`); a returning
+  visit fetches no package (`package-kept`); a download reset after 20 MB
+  (`package-cut-short`) or stopped after 20 MB with its connection left open
+  (`package-stalled`) goes on from where it stopped, with a 206 asked for with
+  `If-Range`, and reaches the main menu; one whose every byte arrived but that never
+  ended is not asked for again (`package-unended`). A program that never arrives ends
+  in "Loading made no progress" (`load-stalled`); so does a list of sound files held
+  back after the package was let through, and when it comes after all neither the game
+  nor the sounds' download starts (`load-gave-up`). With that list held, keeping the
+  page's thread busy for longer than the deadline, as a sleeping computer stops the
+  page, does not fail the load (`load-paused`), nor does a program that arrives slowly,
+  over twice as long as that deadline (`slow-program`); a missing program is said so
+  (`program-missing`), and one served as any file still runs (`program-untyped`). A
+  promise that fails unhandled while the game loads fails the load (`load-rejection`),
+  and one while it runs does not stop it (`running-rejection`). Those that need a
+  download clear the package's cache first, and `?load-timeout=<ms>` shortens the
+  page's deadlines (see [files and saves](files-and-saves.md)).
 
 It exits non-zero if anything fails, printing the failing check's last log lines.
 When the game itself fails, the page shows why under "The game stopped with an
@@ -182,7 +225,7 @@ which is how a difference is traced to its cause. See
 
 ## In-engine diagnostics
 
-`?perf-debug` sets `Module.perfDiagnostics`. This enables the on-screen performance overlay from startup (the hotkey is otherwise unreachable before a scene is running) and prints a line every two seconds separating wall-clock frame rate from engine time per frame, with the number of mid-frame returns to the event loop and the time they took, the worst frame's engine time and interval, how many intervals exceeded 25 ms (visible hitches), and simulation updates per second with the frames that ran none or several (60.0 with none is real-time speed). Separating the two is what distinguishes a slow engine from a throttled presentation surface. The line ends with how long printing the previous one took, and that time is left out of the next frame: with DevTools attached, printing it took 19–24 ms, which had shown as one "worst frame" of about 24 ms in every report. `?thread-debug` and `?graphics-debug` remain as before.
+`?perf-debug` sets `Module.perfDiagnostics`. It logs every stretch of more than 250 ms without a yield (`Browser long block`, see [threads](threads.md)) and, at startup, how long the transparency tables took, with a hash of them (`Browser colour tables`, see [rendering](rendering.md)). It enables the on-screen performance overlay from startup (the hotkey is otherwise unreachable before a scene is running) and prints a line every two seconds separating wall-clock frame rate from engine time per frame, with the number of mid-frame returns to the event loop and the time they took, the worst frame's engine time and interval, how many intervals exceeded 25 ms (visible hitches), and simulation updates per second with the frames that ran none or several (60.0 with none is real-time speed). Separating the two is what distinguishes a slow engine from a throttled presentation surface. The line ends with how long printing the previous one took, and that time is left out of the next frame: with DevTools attached, printing it took 19–24 ms, which had shown as one "worst frame" of about 24 ms in every report. `?thread-debug` and `?graphics-debug` remain as before.
 
 "Engine time" is everything between two frame waits, including any time the engine
 spent suspended mid-frame. When it is high, profile before optimising: `cc.sh
@@ -215,7 +258,42 @@ yet collected. If a long-lived driver tab suddenly runs slowly with the profile
 full of `(garbage collector)`, measure with this before suspecting the game, and
 restart Chrome (`cc.sh kill`, `cc.sh launch`) to get a clean baseline.
 
-The overlay's own numbers come from `PerformanceMan`. `RAlt+P` toggles it and `RAlt+Alt+P` toggles the counter graphs; the driver sends right Alt as `key AltRight+p`.
+The overlay's own numbers come from `PerformanceMan`. `RAlt+P` toggles it and left
+`Alt+P` toggles its counter graphs; the driver sends them as `key AltRight+p` and `key
+AltLeft+p`. In the browser **its counters record only while it is shown.** Each
+measurement reads the clock, a call out to JavaScript, and the engine takes one around
+the scripts of every actor, item, particle and attachable it updates, and the master Lua
+state times every script call it makes. In Decision Day (45 actors, about 10,000
+objects) those reads took about 265 ms of every 10 s on the page thread, about a tenth
+of its engine work, for numbers nobody saw. Now only each sim update's
+total (`Total`, which the percentages are of) is measured all the time; the other
+counters, the script timings and the script list only while the overlay is shown.
+Profiled without `?perf-debug`, those reads fell to 2–3 ms per 10 s. (The futex
+spin-waits read the clock too, 300–420 ms per 10 s there; that is waiting, see
+[threads](threads.md).)
+
+Whether an update is measured is decided once, as it starts
+(`PerformanceMan::NewPerformanceSample`), never in the middle: the overlay can be
+switched on in the middle of one, by `RAlt+P` or by a script setting
+`PerformanceMan.ShowPerformanceStats`, and a measurement whose start was skipped but
+whose stop was not would add the time since some older start. So the graphs show only `Total`
+for the updates while the overlay was hidden (that stretch scrolls off within two
+seconds, their 120 samples), and the script list appears from the update after it
+opens.
+
+`TimerMan::GetAbsoluteTime`, which the counters read, calls `emscripten_get_now()`: the
+clock `steady_clock` reads, from the same epoch (`performance.timeOrigin +
+performance.now()`), without WASI's `clock_time_get` and its BigInt. They agree because
+this emsdk's `clock_time_get` reads `emscripten_get_now()` itself; the `runtime` check
+fails if an upgrade changes that. With the overlay shown that made the counters' reads
+about a quarter cheaper (175 against 234 ms per 10 s in one Decision Day profile each).
+
+`?perf-debug` shows the overlay from the start, so its measurements are in any profile
+taken with it; profile without it to see what a player's game does. The simulation
+harness measures its steps as the game loop measures an update and, before its result,
+prints the counters' averages over its last ten steps and the master state's script
+calls in its last step: `Performance counters (microseconds per step): Total …,
+Scripts …; master state scripts: … calls, … microseconds`.
 
 ## Input
 
@@ -400,9 +478,18 @@ the `|` and spaces URL-encoded) runs the same harness on any mission. The Scene
 must be named: an Activity preset's `SceneName` does not survive into the stored
 preset, and some are not Scenes at all; `tools/parity-probe/missions.txt`
 lists pairs that work. Use `parallel=0` for a reproducible run: Dummy Assault,
-300 steps, gives state hash `1e215e18472c610a`, 191 objects and 47,133 draws on
-every run (before path requests could be serialised, the random stream matched
-but the state did not).
+300 steps, gives state hash `1e215e18472c610a` and 191 objects on every run
+(before path requests could be serialised, the random stream matched but the state
+did not); its draw count depends on the window size, 38,865 in the checks' 1280×720.
+One-Man Army (Zero-G) on Zero-G Battle, 300 steps, gives `331fc00d0a8b544b`, 22
+objects and, at that size, 9,443 draws; its one automover controller and one node
+run their scripts in the master Lua state, so the checks time scripts in it. Not
+every mission reproduces even so: Decision Day, 120 steps, gave one of two state
+hashes from run to run (`d266f926dcb1f0d8` and `4e10ce4fb050edf6`, with the same
+object count and random stream), in two builds whose simulation code was the same.
+Its many bunker automovers run their scripts in the master Lua state too, and those
+iterate tables keyed by objects, whose order follows heap addresses; that is the
+likely cause, not a confirmed one. Do not record its hash.
 
 The harness drains both thread pools before hashing, because `GetMOIDCount` reads
 an index that a pool thread rebuilds. Without that it reports 84, 38 and 4 objects

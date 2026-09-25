@@ -8,6 +8,10 @@
 #include <algorithm>
 #include <limits>
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
 using namespace RTE;
 
 void TimerMan::Clear() {
@@ -38,7 +42,13 @@ void TimerMan::Initialize() {
 }
 
 long long TimerMan::GetAbsoluteTime() const {
+#ifdef __EMSCRIPTEN__
+	// The same clock as steady_clock, from the same epoch (performance.timeOrigin + performance.now()), read without steady_clock's detour through
+	// WASI's clock_time_get, which converts its arguments and returns the time through a BigInt.
+	return static_cast<long long>(emscripten_get_now() * 1000.0);
+#else
 	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+#endif
 }
 
 float TimerMan::GetRealToSimCap() const {

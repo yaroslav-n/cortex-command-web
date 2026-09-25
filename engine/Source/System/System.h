@@ -44,7 +44,8 @@ namespace RTE {
 
 	/// Waits until the page has delivered every sound file, which it fetches after the
 	/// game has started (runtime/sound-files.js), so an Activity plays with all of its
-	/// sounds. Returns at once when they are all here, and natively.
+	/// sounds; or until the page stops waiting for the last ones, once none has arrived
+	/// for three minutes. Returns at once when they are all here, and natively.
 	void BrowserWaitForSoundFiles();
 
 	/// How long ago, in milliseconds, the display refresh that started this frame

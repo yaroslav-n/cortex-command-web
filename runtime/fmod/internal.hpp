@@ -53,8 +53,16 @@ namespace FMOD {
 	/// engine refuses to load a sound from an empty file (ContentFile::LoadAndReleaseSound).
 	constexpr char c_SoundFileOnItsWay[] = "cortex: this sound file is on its way\n";
 
-	/// Whether these are a sound file's bytes rather than the stand-in for them.
+	/// What the page writes over that stand-in once it stops waiting for the bytes: the
+	/// sound then plays as silence of its own length. The page keeps trying, and bytes
+	/// that arrive later replace this too.
+	constexpr char c_SoundFileFailed[] = "cortex: this sound file could not be downloaded\n";
+
+	/// Whether these are a sound file's bytes rather than the stand-in or the marker.
 	bool SoundFileArrived(const SoundBytes& bytes);
+
+	/// Whether the page has stopped waiting for this sound file (c_SoundFileFailed).
+	bool SoundFileFailed(const SoundBytes& bytes);
 
 	/// The whole file, or null if it cannot be read.
 	SoundBytes ReadWholeFile(const std::string& path);
@@ -172,13 +180,21 @@ namespace FMOD {
 	/// A sound whose file has not arrived yet plays silence from its first frame
 	/// until it does, and then starts (Arrive). The audio thread only sees the
 	/// decoder once `waiting` is cleared, after the decoder is complete.
+	///
+	/// A sound whose file the page could not download plays silence as long as the
+	/// sound itself, loops and pitch included, and then ends as the sound would have
+	/// (InitializeSilent, or Fail while waiting): the engine and its scripts see it
+	/// play and end on time, as they would with the file. One that loops forever
+	/// would never end anyway, so it waits for its file instead (system.cpp).
 	struct PlaybackSource {
 		ma_data_source_base base{};
 		ma_decoder decoder{};
 		DecodedPCM pcm; //!< Set when playing from decoded samples rather than decoding.
-		ma_uint64 cursor = 0; //!< The next frame of pcm.
+		ma_uint64 silentFrames = 0; //!< The sound's length in the mixer's frames, when it plays as silence.
+		ma_uint64 cursor = 0; //!< The next frame of pcm, or of the silence.
 		bool ready = false;
 		bool decoding = false;
+		bool silent = false;
 		bool tailRead = false;
 		std::atomic<bool> waiting{false};
 		std::atomic<int> loops{0};
@@ -192,8 +208,12 @@ namespace FMOD {
 		FMOD_RESULT Initialize(DecodedPCM decoded);
 		/// Plays silence until Arrive.
 		FMOD_RESULT InitializeWaiting();
+		/// Plays silence this many of the mixer's frames long, for a sound whose file could not be downloaded.
+		FMOD_RESULT InitializeSilent(ma_uint64 frames);
 		/// Starts decoding a waiting sound's bytes, now that they are here.
 		FMOD_RESULT Arrive(SoundBytes compressed);
+		/// Makes a waiting sound silence this many of the mixer's frames long, from its beginning: its file could not be downloaded.
+		void Fail(ma_uint64 frames);
 	};
 
 	/// The per-channel volume stage: the channel's gain, ramped as FMOD ramps it.
@@ -265,6 +285,7 @@ namespace FMOD {
 		std::unordered_set<std::string> requestedFiles;
 		unsigned long long lastArrivalCheckMs = 0;
 		unsigned long long waitingPlays = 0;
+		unsigned long long silentPlays = 0; //!< Plays of sounds whose file could not be downloaded.
 		unsigned long long plays = 0;
 		unsigned long long stolenChannels = 0;
 	};
@@ -276,6 +297,8 @@ namespace FMOD {
 	void LoadSoundFileList(SystemState& system);
 	/// The listed file for this engine path, or null.
 	const SoundFileInfo* FindSoundFile(const SystemState& system, const std::string& path);
+	/// The sound's length in the mixer's frames: what its decoder produces, converting it to the mixer's rate.
+	ma_uint64 MixLength(const SoundState& sound);
 
 	// system.cpp
 	/// Frees a channel whose sound has ended or was stopped: its voice, source and effects.

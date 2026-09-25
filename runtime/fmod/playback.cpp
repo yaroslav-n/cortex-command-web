@@ -26,16 +26,32 @@ namespace FMOD {
 		return bytes;
 	}
 
+	namespace {
+		template <size_t Size>
+		bool Holds(const SoundBytes& bytes, const char (&text)[Size]) {
+			return bytes && bytes->size() == Size - 1 && std::memcmp(bytes->data(), text, Size - 1) == 0;
+		}
+	} // namespace
+
 	bool SoundFileArrived(const SoundBytes& bytes) {
-		constexpr size_t length = sizeof(c_SoundFileOnItsWay) - 1;
-		return bytes && !bytes->empty() && !(bytes->size() == length && std::memcmp(bytes->data(), c_SoundFileOnItsWay, length) == 0);
+		return bytes && !bytes->empty() && !Holds(bytes, c_SoundFileOnItsWay) && !Holds(bytes, c_SoundFileFailed);
+	}
+
+	bool SoundFileFailed(const SoundBytes& bytes) {
+		return Holds(bytes, c_SoundFileFailed);
 	}
 
 	namespace {
-		/// The next frames of the sound, from the decoder or from the decoded samples.
-		/// The decoded samples behave as the decoder does: a read that reaches the end
+		/// The next frames of the sound, from the decoder, the decoded samples or the
+		/// silence. The last two behave as the decoder does: a read that reaches the end
 		/// returns the frames that remain, and only a read with none left reports the end.
 		ma_result ReadFrames(PlaybackSource& source, float* output, ma_uint64 requested, ma_uint64* count) {
+			if (source.silent) {
+				*count = std::min(requested, source.silentFrames - source.cursor);
+				std::fill_n(output, *count * c_MixChannels, 0.0F);
+				source.cursor += *count;
+				return *count == 0 ? MA_AT_END : MA_SUCCESS;
+			}
 			if (!source.pcm) {
 				return ma_decoder_read_pcm_frames(&source.decoder, output, requested, count);
 			}
@@ -46,6 +62,10 @@ namespace FMOD {
 		}
 
 		ma_result SeekFrames(PlaybackSource& source, ma_uint64 frame) {
+			if (source.silent) {
+				source.cursor = std::min(frame, source.silentFrames);
+				return MA_SUCCESS;
+			}
 			if (!source.pcm) {
 				return ma_decoder_seek_to_pcm_frame(&source.decoder, frame);
 			}
@@ -101,8 +121,8 @@ namespace FMOD {
 
 		ma_result GetPlaybackFormat(ma_data_source* dataSource, ma_format* format, ma_uint32* channels, ma_uint32* sampleRate, ma_channel* channelMap, size_t channelMapCapacity) {
 			const auto& source = *static_cast<PlaybackSource*>(dataSource);
-			if (source.waiting.load(std::memory_order_acquire)) {
-				// What the decoder will report: it converts every sound to the mixer's format.
+			if (source.waiting.load(std::memory_order_acquire) || source.silent) {
+				// What the decoder reports: it converts every sound to the mixer's format.
 				if (format) {
 					*format = ma_format_f32;
 				}
@@ -141,7 +161,7 @@ namespace FMOD {
 				*cursor = 0;
 				return MA_SUCCESS;
 			}
-			if (!source.pcm) {
+			if (!source.pcm && !source.silent) {
 				return ma_decoder_get_cursor_in_pcm_frames(&source.decoder, cursor);
 			}
 			*cursor = source.cursor;
@@ -152,6 +172,10 @@ namespace FMOD {
 			auto& source = *static_cast<PlaybackSource*>(dataSource);
 			if (source.waiting.load(std::memory_order_acquire)) {
 				return MA_NOT_IMPLEMENTED;
+			}
+			if (source.silent) {
+				*length = source.silentFrames;
+				return MA_SUCCESS;
 			}
 			if (!source.pcm) {
 				return ma_decoder_get_length_in_pcm_frames(&source.decoder, length);
@@ -201,6 +225,19 @@ namespace FMOD {
 		return FMOD_OK;
 	}
 
+	FMOD_RESULT PlaybackSource::InitializeSilent(ma_uint64 frames) {
+		silent = true;
+		silentFrames = frames;
+		ma_data_source_config dataConfig = ma_data_source_config_init();
+		dataConfig.vtable = &g_PlaybackVtable;
+		const ma_result status = ma_data_source_init(&dataConfig, &base);
+		if (status != MA_SUCCESS) {
+			return Result(status);
+		}
+		ready = true;
+		return FMOD_OK;
+	}
+
 	FMOD_RESULT PlaybackSource::Arrive(SoundBytes compressed) {
 		bytes = std::move(compressed);
 		ma_decoder_config decoderConfig = ma_decoder_config_init(ma_format_f32, c_MixChannels, c_MixSampleRate);
@@ -211,6 +248,14 @@ namespace FMOD {
 		// Only now may the audio thread read the decoder.
 		waiting.store(false, std::memory_order_release);
 		return FMOD_OK;
+	}
+
+	void PlaybackSource::Fail(ma_uint64 frames) {
+		silent = true;
+		silentFrames = frames;
+		cursor = 0;
+		// Only now may the audio thread read the silence.
+		waiting.store(false, std::memory_order_release);
 	}
 
 	FMOD_RESULT PlaybackSource::Initialize(DecodedPCM decoded) {

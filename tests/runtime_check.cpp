@@ -1,4 +1,5 @@
 #include <SDL3/SDL.h>
+#include <chrono>
 #include <cstdio>
 #include <emscripten.h>
 #include <GLES3/gl3.h>
@@ -49,7 +50,30 @@ int checkShaders() {
     SDL_GL_DestroyContext(context); SDL_DestroyWindow(window); SDL_Quit();
     return 0;
 }
+// TimerMan::GetAbsoluteTime reads emscripten_get_now() where the native build reads
+// steady_clock, and says they are one clock from one epoch. They are because this
+// emsdk's steady_clock is WASI's clock_time_get, which reads emscripten_get_now() too;
+// this fails if an emsdk upgrade changes that. (The game links the audio-worklet
+// variant of emscripten_get_now and this program the plain pthreads one, but on the
+// page and its pthreads both are performance.timeOrigin + performance.now().)
+// A steady_clock read taken between two emscripten_get_now() reads must fall between
+// them, give or take the rounding of steady_clock's nanoseconds (256 ns apart at this
+// magnitude) and of a double.
+int checkClock() {
+    for (int i = 0; i < 1000; ++i) {
+        const double before = emscripten_get_now() * 1000.0;
+        const double steady = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        const double after = emscripten_get_now() * 1000.0;
+        if (steady < before - 1.0 || steady > after + 1.0) {
+            std::printf("FAIL steady_clock read %.1f us, between emscripten_get_now's %.1f and %.1f us\n", steady, before, after);
+            return 9;
+        }
+    }
+    std::printf("steady_clock and emscripten_get_now read one clock from one epoch.\n");
+    return 0;
+}
 int main() {
+    if (const int clock = checkClock()) return clock;
     lua_State* state = luaL_newstate();
     if (!state) return 1;
     luaL_openlibs(state);

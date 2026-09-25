@@ -1,6 +1,6 @@
 # Audio
 
-Updated 2026-09-24.
+Updated 2026-09-25.
 
 Entry points: `engine/Source/Managers/AudioMan.cpp`,
 `engine/Source/Entities/SoundContainer.cpp`, the FMOD compatibility layer in
@@ -17,7 +17,7 @@ fixtures), `audio_check.cpp`, `worklet_probe.c`.
 | `internal.hpp` | the state behind every API object, shared by the files below |
 | `system.cpp` | `System`: the mixer, its settings, `playSound`, `update` (virtualisation, end callbacks) |
 | `sound.cpp` | `Sound`: a file's path and properties; nothing is decoded until a channel plays it |
-| `playback.cpp` | `PlaybackSource`, the data source a channel plays: a decoder, or decoded samples |
+| `playback.cpp` | `PlaybackSource`, the data source a channel plays: a decoder, decoded samples, or the silence of a sound whose file is missing |
 | `decoded.cpp` | `DecodedSounds`, the background decoder and its cache of short sounds |
 | `channel.cpp` | `Channel` / `ChannelGroup`: volume, pitch, pan, fades, the per-channel fader, 3D |
 | `dsp.cpp` | `DSP`: the lowpass, limiter and compressor nodes |
@@ -101,7 +101,14 @@ In the browser a sound's file may not be there yet when it plays: the page fetch
 the sounds after the game has started. FMOD then creates the `Sound` from the
 page's list (length and sample rate), plays silence until the file arrives, starts
 the sound from its beginning when it does, and asks the page for that file first;
-an Activity only starts once every file is here. See
+an Activity only starts once every file is here, or once the page has stopped
+waiting for the last ones. The page then writes a marker in their place
+(`c_SoundFileFailed`), and FMOD plays such a sound as silence exactly as long as
+the sound, loops and pitch included, then ends it as it would have ended
+(`PlaybackSource::InitializeSilent`, and `Fail` for a channel that was waiting): a
+sound whose file could not be downloaded keeps its timing, which scripts see. A
+sound that loops forever, which would never end anyway, keeps waiting for its file
+instead, and starts when it arrives. See
 [files and saves](files-and-saves.md).
 
 Music and long ambience never enter the cache; they always decode as they play.

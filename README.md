@@ -37,12 +37,16 @@ python3 serve.py --port 8080     # then open http://127.0.0.1:8080/
 ```
 
 `dist/` then holds the whole app: `index.html`, `cortex.js`, `cortex.wasm`,
-`cortex.data` (the game data without its sounds, 52 MB) and `audio/` (the sounds,
-295 MB). Opening the page downloads none of it: the start screen offers "Play Game",
-which downloads the program and the package the first time (the browser keeps them
-for later visits) and starts the game, and the sounds follow in the background once
-the rest has arrived. Host `dist/` anywhere
-that sends the two headers above; the test pages in it can be left out.
+`cortex.data` (the game data without its sounds, 52 MB), `cortex.data.json` (its size
+and SHA-256) and `audio/` (the sounds, 295 MB). Opening the page downloads none of it:
+the start screen offers "Play Game", which downloads the program and the package the
+first time (the browser keeps them for later visits) and starts the game, and the
+sounds follow in the background once the rest has arrived. Host `dist/` anywhere that
+sends the two headers above and lets browsers revalidate the files
+(`Cache-Control: no-cache`, as `serve.py` sends; a browser that kept an earlier
+`cortex.js` would not match a newer package); the test pages in it can be left out. A
+host that answers `Range` requests, as most do, lets a download that broke off go on
+from where it stopped.
 
 To run every automated check (test programs, recorded outputs, the game booting
 and its deterministic simulation) in a fresh headless Chrome:

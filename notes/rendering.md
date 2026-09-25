@@ -83,6 +83,11 @@ construct ES 3.00 lacks, this is where it has to be handled — and note the
 translation runs at **runtime on the shader text**, so the file itself stays
 GLSL 330 for the native build.
 
+Creating the context and linking the first three programs (rlgl's default
+shader, ImGui's, ScreenBlit) each wait for the GPU process, which on a first
+start with cold caches took half a second or more; `WindowMan` yields between
+them (see [threads](threads.md)).
+
 > **Shaders are bundled at link time.** `Data` is packaged into the Wasm build by
 > `--preload-file`, so editing a `.frag` does nothing until the target relinks.
 > `CMakeLists.txt` lists the shader files in `LINK_DEPENDS` on `cortex` for
@@ -118,6 +123,45 @@ vec4 paletteEntry(float index) {
 
 **Any new palette lookup must do the same.** This removed undefined behaviour
 rather than working around a driver, so it applies to the native build too.
+
+### Transparency tables, built on the thread pool
+
+Allegro draws translucency into the 8-bit bitmaps through a `COLOR_MAP`: for every
+pair of palette indices, the index whose colour is nearest their blend.
+`FrameMan::CreatePresetColorTables` builds 21 of them at startup, one for every 5%
+of transparency (`SetTransTableFromPreset` picks among them), and `SetColorTable`
+builds any other on its first use. Each is 65,280 searches of the whole palette
+(`create_trans_table` and `bestfit_color` in the bundled Allegro), and one after
+another the 21 took 761–875 ms of every start on the Metal instance (a shared
+machine under load), one of the longest steps before the menu.
+
+In the browser `BrowserCreateTransTables` (in `FrameMan.cpp`) builds them in
+parallel. The engine thread first makes every map entry, so nothing is inserted
+into the map while other threads write into its tables; then the priority pool's
+four workers and the engine thread each take the next table from one atomic
+counter until none is left, and the engine thread waits for the workers
+(`multi_future::wait`, which yields). Only the engine thread yields to the
+browser, between its rows. A table depends on nothing but the palette and its
+blend amount, and one thread writes it, so the bytes are the serial loop's
+whichever thread built which. The native build keeps upstream's loop. The
+`rgb_map` shortcut in `create_trans_table` (`#if 0` in `color.c`) must stay off
+either way: it rounds differently and would change every table.
+
+Under `?perf-debug` the log says `Browser colour tables: 21 in N ms, hash H`: the
+build time, and a 64-bit FNV-1a hash of the 21 tables in preset order. The serial
+loop gives `2452950435e18642`, and the parallel build gave the same on every one
+of 13 starts, on Metal and SwiftShader; the `colour-tables` check holds it to that
+(see [testing](testing.md)). Measured on the Metal instance:
+
+| | serial | parallel |
+| --- | --- | --- |
+| tables built (`?perf-debug`) | 761–875 ms, median 820 | 140–227 ms, median 189 |
+| on the page's thread (V8 profile) | 750–802 ms (`FrameMan::Initialize`, which inlines them) | 120–171 ms (`create_trans_table`, the engine thread's share) |
+| Play to main menu, fresh profile (median of six) | 4.16 s | 3.56 s |
+| Play to main menu, returning (median of six) | 3.83 s | 3.20 s |
+
+The starts alternated between the two builds, served from one origin. The first
+two rows' serial column comes from the build before with only its timings printed.
 
 ### Presentation and suspension
 

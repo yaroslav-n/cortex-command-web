@@ -650,7 +650,16 @@ int LuaStateWrapper::RunScriptFunctionObject(const LuabindObjectWrapper* functio
 		timing = &m_ScriptTimings[path];
 	}
 
+#ifdef __EMSCRIPTEN__
+	// Every clock read is a call out to JavaScript. Only the master state's timings are kept, and only the performance overlay shows them, so the clock
+	// is read only for those and only while the overlay measures. The entry is still made, so the serial simulation harness allocates as it did: entries
+	// come from the heap Lua allocates from too, and a script's table keyed by objects iterates in the order of their addresses. (The live game loop,
+	// which skips sorting the timings while the overlay is hidden, never repeated itself anyway: how many sim updates a frame runs follows real time.)
+	const bool timed = timing && g_PerformanceMan.IsMeasuringCounters();
+	std::chrono::steady_clock::time_point begin = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+#else
 	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+#endif
 	{
 		ZoneScoped;
 		ZoneName(path.c_str(), path.length());
@@ -663,7 +672,11 @@ int LuaStateWrapper::RunScriptFunctionObject(const LuabindObjectWrapper* functio
 			status = -1;
 		}
 	}
+#ifdef __EMSCRIPTEN__
+	std::chrono::steady_clock::time_point end = timed ? std::chrono::steady_clock::now() : begin;
+#else
 	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+#endif
 
 	if (timing) {
 		timing->m_Time += std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
@@ -722,7 +735,13 @@ int LuaStateWrapper::RunScriptConditionalTestFunctionObject(const LuabindObjectW
 	}
 
 	const std::string& path = functionObject->GetFilePath();
+#ifdef __EMSCRIPTEN__
+	// As in RunScriptFunctionObject: the clock is read only for timings that are kept and shown.
+	const bool timed = &g_LuaMan.GetMasterScriptState() == this && g_PerformanceMan.IsMeasuringCounters();
+	std::chrono::steady_clock::time_point begin = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+#else
 	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+#endif
 	{
 		ZoneScoped;
 		ZoneName(path.c_str(), path.length());
@@ -738,7 +757,11 @@ int LuaStateWrapper::RunScriptConditionalTestFunctionObject(const LuabindObjectW
 			lua_pop(m_State, 1);
 		}
 	}
+#ifdef __EMSCRIPTEN__
+	std::chrono::steady_clock::time_point end = timed ? std::chrono::steady_clock::now() : begin;
+#else
 	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+#endif
 
 	// only track time in non-MT scripts, for now
 	if (&g_LuaMan.GetMasterScriptState() == this) {

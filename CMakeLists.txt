@@ -109,12 +109,17 @@ target_link_options(cortex PRIVATE
   -sFORCE_FILESYSTEM=1 -lidbfs.js
   "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/persistence-journal.js" "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/filesystem.js"
   "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/sound-files.js" "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/thread-errors.js"
+  # The page brings the package's bytes (Module.getPreloadedPackage in site/index.html),
+  # checks them and keeps them in Cache Storage; the file packager makes the files.
   "--preload-file=${ENGINE}/Data@/Data"
-  "--exclude-file=*.flac" "--exclude-file=*.ogg" "--exclude-file=*.wav" "--exclude-file=*.mp3"
-  # A returning player's browser keeps the package in IndexedDB and uses it while its
-  # SHA-256 matches the build's (Emscripten's file packager, EM_PRELOAD_CACHE).
-  --use-preload-cache)
+  "--exclude-file=*.flac" "--exclude-file=*.ogg" "--exclude-file=*.wav" "--exclude-file=*.mp3")
 set_target_properties(cortex PROPERTIES SUFFIX ".js")
+# The package's size and SHA-256, which the page checks it against before the game uses
+# or keeps it, and keeps it under.
+add_custom_command(TARGET cortex POST_BUILD
+  COMMAND "${CMAKE_COMMAND}" "-DPACKAGE=${CORTEX_DIST_DIR}/cortex.data" "-DOUTPUT=${CORTEX_DIST_DIR}/cortex.data.json"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/data-package-json.cmake"
+  VERBATIM)
 # The linker copies these into cortex.js; an edit to one must relink the game.
 set_property(TARGET cortex APPEND PROPERTY LINK_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/runtime/persistence-journal.js" "${CMAKE_CURRENT_SOURCE_DIR}/runtime/filesystem.js"
@@ -228,7 +233,8 @@ target_link_libraries(cortex_engine PUBLIC cortex_fmod_browser)
 add_executable(audio_contract tests/audio_contract.cpp)
 target_link_libraries(audio_contract PRIVATE cortex_fmod_browser)
 target_link_options(audio_contract PRIVATE ${CORTEX_AUDIO_LINK_OPTIONS} -sEXIT_RUNTIME=1 -sSTACK_SIZE=8388608
-  "--preload-file=${ENGINE}/Data/Base.rte/Devices/Weapons/Pistol/Sounds/PistolFire.flac@/audio/PistolFire.flac")
+  "--preload-file=${ENGINE}/Data/Base.rte/Devices/Weapons/Pistol/Sounds/PistolFire.flac@/audio/PistolFire.flac"
+  "--preload-file=${ENGINE}/Data/Browncoats.rte/Scenes/Sounds/Ambience/OneShots/RefineryAmbienceInt_OneShot11.ogg@/audio/OneShot.ogg")
 set_target_properties(audio_contract PROPERTIES SUFFIX ".js")
 configure_file(tests/audio-mixer-check.html "${CORTEX_DIST_DIR}/audio-mixer-check.html" COPYONLY)
 
@@ -293,8 +299,11 @@ target_link_options(texture_gpu_contract PRIVATE -sMIN_WEBGL_VERSION=2 -sMAX_WEB
 set_target_properties(texture_gpu_contract PROPERTIES SUFFIX ".js")
 configure_file(tests/texture-gpu-check.html "${CORTEX_DIST_DIR}/texture-gpu-check.html" COPYONLY)
 
+# The storage fixture starts dozens of these runtimes in one page and none of them
+# runs a thread: with the default pool of 16 workers each, the page's renderer
+# crashed at the 32nd.
 add_executable(storage_runtime EXCLUDE_FROM_ALL tests/storage_runtime.cpp)
-target_link_options(storage_runtime PRIVATE "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/persistence-journal.js" -lidbfs.js -sFORCE_FILESYSTEM=1 -sMODULARIZE=1 -sEXPORT_NAME=StorageRuntime "-sEXPORTED_RUNTIME_METHODS=['FS','IDBFS']")
+target_link_options(storage_runtime PRIVATE "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/persistence-journal.js" -lidbfs.js -sFORCE_FILESYSTEM=1 -sMODULARIZE=1 -sEXPORT_NAME=StorageRuntime "-sEXPORTED_RUNTIME_METHODS=['FS','IDBFS']" -sPTHREAD_POOL_SIZE=0)
 set_target_properties(storage_runtime PROPERTIES SUFFIX ".js")
 configure_file(tests/storage-race-check.html "${CORTEX_DIST_DIR}/storage-race-check.html" COPYONLY)
 configure_file(tests/editor-storage-check.html "${CORTEX_DIST_DIR}/editor-storage-check.html" COPYONLY)

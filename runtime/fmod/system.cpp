@@ -322,8 +322,10 @@ namespace FMOD {
 		} else {
 			// Read the file here, on the thread that called play, never from the mixer.
 			SoundBytes bytes = soundState.compressed.lock();
+			bool failed = false;
 			if (!bytes) {
 				bytes = ReadWholeFile(soundState.path);
+				failed = SoundFileFailed(bytes);
 				if (!SoundFileArrived(bytes)) {
 					bytes.reset();
 				}
@@ -335,9 +337,17 @@ namespace FMOD {
 				}
 				initialized = control.data->Initialize(std::move(bytes));
 				state->decoded->CountPlay(false);
+			} else if (failed && control.loops >= 0 && FindSoundFile(*state, soundState.path)) {
+				// The page could not download it (it keeps trying): silence as long as the
+				// sound, which then ends as the sound would have.
+				initialized = control.data->InitializeSilent(MixLength(soundState));
+				++state->silentPlays;
+				RequestSoundFile(*state, soundState.path);
 			} else if (FindSoundFile(*state, soundState.path)) {
 				// Still on its way: play silence until it arrives, then start from the
-				// beginning (StartArrivedChannels), and ask for it ahead of the rest.
+				// beginning (StartArrivedChannels), and ask for it ahead of the rest. So does
+				// a sound that loops forever and could not be downloaded: silent or waiting,
+				// it never ends, and this way it is heard once its file arrives.
 				initialized = control.data->InitializeWaiting();
 				control.waiting = true;
 				++state->waitingPlays;
@@ -436,7 +446,11 @@ namespace FMOD {
 		}
 		system.lastArrivalCheckMs = now;
 		std::lock_guard lock(system.mutex);
-		std::unordered_map<std::string, SoundBytes> files;
+		struct File {
+			SoundBytes bytes; //!< Null until they arrive.
+			bool failed = false;
+		};
+		std::unordered_map<std::string, File> files;
 		for (auto& channel : system.channels) {
 			ControlState& control = *channel->state;
 			if (!control.waiting || !control.voice || !control.source) {
@@ -445,26 +459,40 @@ namespace FMOD {
 			SoundState& sound = *control.source->state;
 			auto file = files.find(sound.path);
 			if (file == files.end()) {
-				SoundBytes bytes = sound.compressed.lock();
-				if (!bytes) {
-					bytes = ReadWholeFile(sound.path);
+				File found{sound.compressed.lock()};
+				if (!found.bytes) {
+					found.bytes = ReadWholeFile(sound.path);
 				}
-				if (!SoundFileArrived(bytes)) {
-					bytes.reset();
+				found.failed = SoundFileFailed(found.bytes);
+				if (!SoundFileArrived(found.bytes)) {
+					found.bytes.reset();
 				}
-				file = files.emplace(sound.path, bytes).first;
+				file = files.emplace(sound.path, std::move(found)).first;
 			}
-			if (!file->second) {
+			if (file->second.failed) {
+				// The page stopped waiting for it: silence as long as the sound, from its
+				// beginning, as if the file had arrived now. A sound that loops forever
+				// would never end either way, so it goes on waiting, until it arrives or is
+				// told to stop looping (AudioMan::FinishIngameLoopingSounds).
+				if (control.loops < 0) {
+					continue;
+				}
+				control.waiting = false;
+				control.data->Fail(MixLength(sound));
+				++system.silentPlays;
 				continue;
 			}
-			sound.compressed = file->second;
+			if (!file->second.bytes) {
+				continue;
+			}
+			sound.compressed = file->second.bytes;
 			control.waiting = false;
-			if (control.data->Arrive(file->second) != FMOD_OK) {
+			if (control.data->Arrive(file->second.bytes) != FMOD_OK) {
 				control.active = false;
 				continue;
 			}
 			if (sound.sampleRate > 0 && static_cast<double>(sound.frames) / sound.sampleRate <= DecodedSounds::c_MaxSeconds) {
-				system.decoded->Request(sound.path, file->second);
+				system.decoded->Request(sound.path, file->second.bytes);
 			}
 			system.decoded->CountPlay(false);
 		}
