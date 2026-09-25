@@ -21,6 +21,7 @@ GUITextPanel::GUITextPanel(GUIManager* Manager) :
 	m_Locked = false;
 	m_WidthMargin = 3;
 	m_HeightMargin = 0;
+	m_CentredVertically = false;
 
 	m_MaxTextLength = 0;
 	m_NumericOnly = false;
@@ -36,6 +37,7 @@ GUITextPanel::GUITextPanel() :
 	m_Locked(false),
 	m_WidthMargin(3),
 	m_HeightMargin(0),
+	m_CentredVertically(false),
 	m_CursorX(m_CursorY = 0),
 	m_CursorIndex(0),
 	m_StartIndex(0),
@@ -73,6 +75,8 @@ void GUITextPanel::ChangeSkin(GUISkin* Skin) {
 
 	Skin->GetValue("TextBox", "WidthMargin", &m_WidthMargin);
 	Skin->GetValue("TextBox", "HeightMargin", &m_HeightMargin);
+	std::string alignString;
+	m_CentredVertically = Skin->GetValue("TextBox", "VAlignment", &alignString) && stricmp(alignString.c_str(), "middle") == 0;
 
 	// Convert
 	m_FontColor = Skin->ConvertColor(m_FontColor);
@@ -94,7 +98,7 @@ void GUITextPanel::Draw(GUIScreen* Screen) {
 
 	int FontHeight = m_Font->GetFontHeight();
 	int wSpacer = m_WidthMargin;
-	int hSpacer = m_HeightMargin;
+	int hSpacer = m_CentredVertically ? (m_Height - FontHeight) / 2 : m_HeightMargin;
 
 	// Clamp the cursor
 	m_CursorX = std::max(m_CursorX, 0);
@@ -132,7 +136,7 @@ void GUITextPanel::Draw(GUIScreen* Screen) {
 	const int blinkInterval = 250;
 	bool shouldBlink = static_cast<int>(m_BlinkTimer.GetElapsedRealTimeMS()) % (blinkInterval * 2) > blinkInterval;
 	if (m_GotFocus && shouldBlink) {
-		Screen->GetBitmap()->DrawRectangle(m_X + m_CursorX + 2, m_Y + hSpacer + m_CursorY + 2, 1, FontHeight - 3, m_CursorColor, true);
+		Screen->GetBitmap()->DrawRectangle(m_X + wSpacer - 1 + m_CursorX, m_Y + hSpacer + m_CursorY + 2, 1, FontHeight - 3, m_CursorColor, true);
 	}
 
 	// Restore normal clipping
