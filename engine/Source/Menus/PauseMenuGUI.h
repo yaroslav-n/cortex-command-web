@@ -5,6 +5,9 @@
 #include <array>
 #include <memory>
 #include <string>
+#ifdef __EMSCRIPTEN__
+#include <vector>
+#endif
 
 struct BITMAP;
 
@@ -27,7 +30,10 @@ namespace RTE {
 		enum class PauseMenuUpdateResult {
 			NoEvent,
 			BackToMain,
-			ActivityResumed
+			ActivityResumed,
+#ifdef __EMSCRIPTEN__
+			ActivityRestarted
+#endif
 		};
 
 #pragma region Creation
@@ -80,6 +86,9 @@ namespace RTE {
 			SettingsButton,
 			ModManagerButton,
 			ResumeButton,
+#ifdef __EMSCRIPTEN__
+			RestartButton,
+#endif
 			ButtonCount
 		};
 
@@ -106,6 +115,11 @@ namespace RTE {
 
 		bool m_SavingButtonsDisabled; //!< Whether the save and load buttons are disabled and hidden.
 		bool m_ModManagerButtonDisabled; //!< Whether the mod manager button is disabled and hidden.
+#ifdef __EMSCRIPTEN__
+		std::string m_BackButtonTargetName; //!< The menu the back button returns to, as MenuMan last named it.
+		bool m_ScenarioLostLayout; //!< Whether the buttons are those of a lost scenario: Restart Scenario, Load Game and Exit to Menu.
+		int m_ButtonsCentreY; //!< Where upstream's full column of buttons is centred, relative to the root box; every layout is centred there.
+#endif
 
 		/// GUI elements that compose the pause menu screen.
 		GUICollectionBox* m_PauseMenuBox;
@@ -134,6 +148,17 @@ namespace RTE {
 		/// Animates (blinking) the resume game button.
 		void BlinkResumeButton();
 #pragma endregion
+
+#ifdef __EMSCRIPTEN__
+		/// Shows these buttons, top to bottom, and hides the others. ButtonCount leaves a gap one button high.
+		/// @param rows The buttons, in order.
+		void LayOutButtons(const std::vector<PauseMenuButton>& rows);
+
+		/// Sets a button's text, in the hovered and unhovered case, and fits the button to it.
+		/// @param button The button.
+		/// @param text Its text.
+		void SetButtonText(PauseMenuButton button, std::string text);
+#endif
 
 		/// Clears all the member variables of this PauseMenuGUI, effectively resetting the members of this object.
 		void Clear();

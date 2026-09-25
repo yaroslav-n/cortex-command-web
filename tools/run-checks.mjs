@@ -55,8 +55,8 @@ const CHECKS = [
   { name: 'float-contract', node: 'float_contract.js', golden: 'tests/golden/float_contract.txt' },
   // The game.
   // Opening the page downloads none of the game: it offers to (site/index.html). Under
-  // the game, a 50 px strip links to the original and to this port and says that Ctrl+F
-  // opens fullscreen, which it then must.
+  // the game, a 50 px strip says that Ctrl+F opens fullscreen, which it then must, links
+  // this port and the original, and links the bug report form.
   { name: 'start-screen', start: { expect: 'offer-play', label: /^Play Game$/, strip: true } },
   // A browser without JSPI is told so and downloads nothing.
   { name: 'start-screen-no-jspi', start: { expect: 'unsupported', removeJspi: true } },
@@ -301,14 +301,16 @@ async function runStartScreen(connection, base, check) {
     if (check.start.strip) {
       const strip = JSON.parse(await tab.evaluate(`JSON.stringify({
         links: [...document.querySelectorAll('#bar a')].map((link) => link.hostname + link.pathname + ' ' + link.target + (link.querySelector('svg') ? ' icon' : '')),
-        credit: document.getElementById('credit').textContent,
+        names: [...document.querySelectorAll('#bar a')].map((link) => link.textContent).join(' | '),
         hint: document.getElementById('fullscreen-hint').textContent,
         bar: document.getElementById('bar').getBoundingClientRect().height,
         game: document.getElementById('game').getBoundingClientRect().height,
         window: innerHeight })`));
       const links = strip.links.join(', ');
-      const expected = 'github.com/cortex-command-community/Cortex-Command-Community-Project _blank icon, github.com/yaroslav-n/cortex-command-web _blank icon';
-      if (links !== expected || strip.credit !== 'Based on Cortex Command Community Project' || strip.hint !== 'Open fullscreen by pressing Ctrl + F' ||
+      const expected = 'github.com/yaroslav-n/cortex-command-web _blank icon, github.com/cortex-command-community/Cortex-Command-Community-Project _blank icon, '
+        + 'forms.gle/xyCqE7HFgA5KzMt5A _blank icon';
+      if (links !== expected || strip.names !== 'Cortex Command Web | Cortex Command Community Project | Submit a bug' ||
+        strip.hint !== 'Open fullscreen by pressing Ctrl + F' ||
         strip.bar !== 50 || strip.game !== strip.window - 50) {
         return { status: 'fail', detail: `the strip under the game is not as expected: ${JSON.stringify(strip)}`, lines: tab.lines };
       }

@@ -159,11 +159,15 @@ stays on its main screen.
 
 ## The strip under the game, and fullscreen
 
-The page keeps a 50 px black strip under the game (`#bar` in `site/index.html`): on
-the left "Based on Cortex Command Community Project" with a GitHub icon, linking to
-the original's repository; on the right "Open fullscreen by pressing Ctrl + F" and a
-GitHub icon alone, linking to this port's. The game's area (`#game`, the canvas and
-the start screen) is the window less the strip.
+The page keeps a 50 px black strip under the game (`#bar` in `site/index.html`),
+laid out as [the spec](../specs/page.md) says: on the left "Open fullscreen by
+pressing Ctrl + F"; on the right three links separated by bullets, each with an icon
+and a faint underline: "Cortex Command Web" and "Cortex Command Community Project"
+with GitHub icons, to this port's repository and the original's, and "Submit a bug"
+with a bug icon (both icons Octicons), which opens the bug report form. Below 700 px
+the Ctrl+F note is hidden and the rest stays on the right; below 600 px the strip's
+text is smaller. The game's area (`#game`, the canvas and the start screen) is the
+window less the strip.
 
 Ctrl+F puts `#game` alone on the screen, so the strip is not shown, and Esc leaves
 it: Chrome takes Esc in fullscreen for itself, before the page sees it (in headless

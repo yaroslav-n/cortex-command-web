@@ -1088,6 +1088,14 @@ void UInputMan::HandleSpecialInput() {
 			g_ActivityMan.PauseActivity(true, FlagShiftState());
 			return;
 		}
+#ifdef __EMSCRIPTEN__
+		// A lost scenario's menu (MenuMan) opens with Space and Enter too. Upstream took Space
+		// only once "Press [SPACE] or [START] to continue!" showed, five seconds after the loss.
+		if (g_ActivityMan.ScenarioLost() && (KeyPressed(SDLK_SPACE) || KeyPressed(SDLK_RETURN) || KeyPressed(SDLK_KP_ENTER))) {
+			g_ActivityMan.PauseActivity();
+			return;
+		}
+#endif
 		// Ctrl+R or Back button for controllers to reset activity.
 		if (!g_MetaMan.GameInProgress() && !g_ActivityMan.ActivitySetToRestart()) {
 			g_ActivityMan.SetRestartActivity((FlagRAltState() && KeyPressed(SDLK_R)) || AnyBackPress());

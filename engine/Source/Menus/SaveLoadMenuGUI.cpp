@@ -238,6 +238,10 @@ void SaveLoadMenuGUI::DeleteSave() {
 
 void SaveLoadMenuGUI::UpdateButtonEnabledStates() {
 	bool allowSave = g_ActivityMan.GetActivity() && g_ActivityMan.GetActivity()->GetAllowsUserSaving() && m_SaveGameName->GetText() != "";
+#ifdef __EMSCRIPTEN__
+	// A lost scenario's menu offers loading only.
+	allowSave = allowSave && !g_ActivityMan.ScenarioLost();
+#endif
 
 	int existingSaveItemIndex = -1;
 	for (int i = 0; i < m_SaveGamesListBox->GetItemList()->size(); ++i) {
@@ -293,6 +297,10 @@ void SaveLoadMenuGUI::UpdateButtonEnabledStates() {
 		} else if (!m_SavingBlinkTimer.IsPastRealTimeLimit()) {
 			// Show "Saved!" for a little while after saving
 			m_DescriptionLabel->SetText("Game saved successfully!");
+#ifdef __EMSCRIPTEN__
+		} else if (g_ActivityMan.ScenarioLost()) {
+			m_DescriptionLabel->SetText("Choose a game to load.");
+#endif
 		} else if (!g_ActivityMan.GetActivity()->GetAllowsUserSaving()) {
 			m_DescriptionLabel->SetText("The currently played activity does not allow saving.");
 		} else if (m_SaveGameName->GetText().empty()) {
