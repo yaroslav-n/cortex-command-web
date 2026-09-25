@@ -1,6 +1,6 @@
 # Editors
 
-Updated 2026-09-24.
+Updated 2026-09-25.
 
 Entry points: `engine/Source/Activities/SceneEditor.cpp` (activity level),
 `engine/Source/Menus/SceneEditorGUI.cpp` (placement),
@@ -174,6 +174,65 @@ it. Verified against the untouched original with the parity probe: the same scen
 (`ParityProbe.rte/ParityScenes.ini`, hosted by a do-nothing scripted activity
 because the editor runs no global scripts), photographed with the camera pinned
 at 2520,1310, is **pixel-identical** in both builds — 0 of 482,112 pixels differ.
+
+## The object list
+
+The port's object list (the category list and items shown by every editor and by
+in-game building, `ObjectPickerGUI`) departs from upstream in two ways, both set by the
+user. See [specs/editors.md](../specs/editors.md).
+
+### Fewer categories
+
+Upstream lists every group that holds something placeable: 36 in in-game building and
+37 in the editors, many of them subcategories such as Actors - Heavy or Tools - Diggers.
+The port lists 28 (29 in the editors, with Assemblies - Schemes), modelled on Build 31,
+the Data Realms game.
+
+It changes only what the list shows. The game's groups stay exactly as upstream has them,
+because other code picks items by them: AI deliveries take troops from Actors - Light
+and crates from Craft - Crates (`DeliveryCreationHandler.lua`, `SkirmishDefense.lua`), and
+the buy menu's Mecha tab is Actors - Mecha and Actors - Turrets. So `ObjectPickerGUI.cpp`,
+under `__EMSCRIPTEN__`, maps groups to categories. `c_GroupsListedElsewhere` names the
+groups listed inside another category (Actors - Heavy in Actors, Bunker Clutter in
+Bunker Backgrounds) or under another name (Craft - Crates as Crates, Actors - Wildlife
+as Wildlife). A category shows the items of all its groups, each once, in load order
+(`PresetMan::GetAllOfGroups`), and is judged by upstream's rules over those items. Groups
+not named there, a mod's included, are listed as they are.
+
+Checked against the data before changing it: every item of the subcategories no longer
+listed is also in the parent category, except 41 decorations only in Bunker Clutter
+(lights, small crates, Dummy racks, Ronin furniture) and the Crab, only in Actors -
+Wildlife. Hence the merge into Bunker Backgrounds and the Wildlife category.
+
+Assemblies - Passages, - Prefabs and - Rooms come from the assembly schemes'
+`AssemblyGroup`, and every assembly is in exactly one of them. A group holding nothing
+but assemblies is listed only if `Settings.ini` names it in a `VisibleAssemblyGroup`
+line. Build 31's engine names these three by default, and upstream's names none, so upstream
+never shows them. The port lists them from `c_ListedAssemblyGroups`.
+
+### No Actor Spawners
+
+Upstream's development code adds a **Generic Actor Spawner** (March 2024, part of the
+Browncoat mission work): a scripted marker for mission makers, buyable at 200 oz and alone
+in a new category, Actor Spawners. That category sorted first, and the list selects its
+first category when it opens, so the list opened on it. The released game (v6.2.2,
+February 2024) has neither. The port sets the spawner's `Buyable = 0`, which removes it
+and its category from the list; Actors is first again and the list opens on it, as in
+the release.
+
+It is hidden rather than left unloaded. Reading a preset takes a unique ID
+(`Serializable::CreateSerializable` ends in `MovableObject::Create`), so not loading it
+would give every object loaded or spawned after it an ID one lower than the original's.
+That changes the recorded simulation hashes in `tools/run-checks.mjs`, which fold in
+every object's ID, and every id the Parity Timeline prints. Hidden, it keeps loading
+identical. Nothing that is switched on uses it: Refinery Assault, the mission that places
+copies of it, is commented out of `Browncoats.rte/Index.ini` in both versions.
+
+The list's other differences from v6.2.2, all from the same mission work, are left as
+upstream has them: two scripted consoles and an item dispenser demo; blast doors, vault
+doors and Coalition bunker cannons that v6.2.2 shipped switched off; one background
+piece; the MG-85 Manbreaker, which is also new in the battle buy menu; and seven bare
+door motors that upstream took out of the list.
 
 ## Scene creation is slow, not broken
 
