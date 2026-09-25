@@ -23,9 +23,60 @@
 #include "BunkerAssembly.h"
 #include "BunkerAssemblyScheme.h"
 
+#ifdef __EMSCRIPTEN__
+#include <algorithm>
+#include <array>
+#include <map>
+#include <unordered_map>
+#endif
+
 using namespace RTE;
 
 BITMAP* ObjectPickerGUI::s_Cursor = nullptr;
+
+#ifdef __EMSCRIPTEN__
+namespace {
+	// Cortex Command Web lists fewer categories than upstream (specs/editors.md). Each group
+	// named here is listed inside another category or under another name. The groups
+	// themselves stay as they are, because the AI and the buy menu pick items by them.
+	const std::unordered_map<std::string, std::string> c_GroupsListedElsewhere = {
+	    {"Actors - Heavy", "Actors"},
+	    {"Actors - Light", "Actors"},
+	    {"Actors - Mecha", "Actors"},
+	    {"Actors - Turrets", "Actors"},
+	    {"Actors - Wildlife", "Wildlife"},
+	    {"Bombs - Grenades", "Bombs"},
+	    {"Bombs - Payloads", "Bombs"},
+	    {"Bunker Clutter", "Bunker Backgrounds"},
+	    {"Bunker Systems - Automovers", "Bunker Systems"},
+	    {"Craft - Crates", "Crates"},
+	    {"Tools - Breaching", "Tools"},
+	    {"Tools - Constructors", "Tools"},
+	    {"Tools - Diggers", "Tools"},
+	};
+
+	// A group of nothing but assemblies is listed only when named here or in Settings.ini.
+	// Build 31 listed these three by default; upstream stopped.
+	const std::array<std::string, 3> c_ListedAssemblyGroups = {"Assemblies - Passages", "Assemblies - Prefabs", "Assemblies - Rooms"};
+
+	/// The category a group is listed in.
+	const std::string& CategoryOfGroup(const std::string& group) {
+		auto listedElsewhere = c_GroupsListedElsewhere.find(group);
+		return listedElsewhere != c_GroupsListedElsewhere.end() ? listedElsewhere->second : group;
+	}
+
+	/// The groups a category lists: the group of the same name and those listed in it.
+	std::vector<std::string> GroupsOfCategory(const std::string& category) {
+		std::vector<std::string> groups{category};
+		for (const auto& [group, listedIn]: c_GroupsListedElsewhere) {
+			if (listedIn == category) {
+				groups.emplace_back(group);
+			}
+		}
+		return groups;
+	}
+} // namespace
+#endif
 
 void ObjectPickerGUI::Clear() {
 	m_GUIScreen = nullptr;
@@ -234,9 +285,23 @@ void ObjectPickerGUI::UpdateGroupsList() {
 	std::list<std::string> groupList;
 	g_PresetMan.GetModuleSpaceGroups(groupList, m_ModuleSpaceID, m_ShowType);
 
+#ifdef __EMSCRIPTEN__
+	// Each category is judged by the items of all its groups; the map keeps the categories in
+	// the same order as upstream's sorted group list.
+	std::map<std::string, std::vector<std::string>> categories;
+	for (const std::string& group: groupList) {
+		categories[CategoryOfGroup(group)].emplace_back(group);
+	}
+	for (const auto& [groupListEntry, categoryGroups]: categories) {
+		std::list<Entity*> objectList;
+		for (const std::string& group: categoryGroups) {
+			g_PresetMan.GetAllOfGroupInModuleSpace(objectList, group, m_ShowType, m_ModuleSpaceID);
+		}
+#else
 	for (const std::string& groupListEntry: groupList) {
 		std::list<Entity*> objectList;
 		g_PresetMan.GetAllOfGroupInModuleSpace(objectList, groupListEntry, m_ShowType, m_ModuleSpaceID);
+#endif
 
 		bool onlyAssembliesInGroup = true;
 		bool onlyAssemblySchemesInGroup = true;
@@ -264,6 +329,11 @@ void ObjectPickerGUI::UpdateGroupsList() {
 					break;
 				}
 			}
+#ifdef __EMSCRIPTEN__
+			if (std::find(c_ListedAssemblyGroups.begin(), c_ListedAssemblyGroups.end(), groupListEntry) != c_ListedAssemblyGroups.end()) {
+				onlyAssembliesInGroup = false;
+			}
+#endif
 		}
 		if (!objectList.empty() && hasObjectsToShow && (!onlyAssembliesInGroup || groupListEntry == "Assemblies") && (!onlyAssemblySchemesInGroup || showAssemblySchemes)) {
 			m_GroupsList->AddItem(groupListEntry);
@@ -364,23 +434,29 @@ void ObjectPickerGUI::UpdateObjectsList(bool selectTop) {
 	std::vector<std::list<Entity*>> moduleList(g_PresetMan.GetTotalModuleCount(), std::list<Entity*>());
 
 	if (const GUIListPanel::Item* groupListItem = m_GroupsList->GetSelected()) {
+		// GetAllOfGroups gives each item once, in the order its module loaded it.
+#ifdef __EMSCRIPTEN__
+		const std::vector<std::string> groups = GroupsOfCategory(groupListItem->m_Name);
+#else
+		const std::vector<std::string> groups{groupListItem->m_Name};
+#endif
 		if (m_ModuleSpaceID < 0) {
 			if (g_SettingsMan.ShowForeignItems() || m_NativeTechModuleID <= 0) {
 				for (int moduleID = 0; moduleID < moduleList.size(); ++moduleID) {
-					g_PresetMan.GetAllOfGroup(moduleList.at(moduleID), groupListItem->m_Name, m_ShowType, moduleID);
+					g_PresetMan.GetAllOfGroups(moduleList.at(moduleID), groups, m_ShowType, moduleID);
 				}
 			} else {
 				for (int moduleID = 0; moduleID < moduleList.size(); ++moduleID) {
 					if (moduleID == 0 || moduleID == m_NativeTechModuleID || g_PresetMan.GetDataModule(moduleID)->IsMerchant()) {
-						g_PresetMan.GetAllOfGroup(moduleList.at(moduleID), groupListItem->m_Name, m_ShowType, moduleID);
+						g_PresetMan.GetAllOfGroups(moduleList.at(moduleID), groups, m_ShowType, moduleID);
 					}
 				}
 			}
 		} else {
 			for (int moduleID = 0; moduleID < g_PresetMan.GetOfficialModuleCount() && moduleID < m_ModuleSpaceID; ++moduleID) {
-				g_PresetMan.GetAllOfGroup(moduleList.at(moduleID), groupListItem->m_Name, m_ShowType, moduleID);
+				g_PresetMan.GetAllOfGroups(moduleList.at(moduleID), groups, m_ShowType, moduleID);
 			}
-			g_PresetMan.GetAllOfGroup(moduleList.at(m_ModuleSpaceID), groupListItem->m_Name, m_ShowType, m_ModuleSpaceID);
+			g_PresetMan.GetAllOfGroups(moduleList.at(m_ModuleSpaceID), groups, m_ShowType, m_ModuleSpaceID);
 		}
 	}
 
