@@ -3,6 +3,9 @@
 #include "Singleton.h"
 #include "glm/fwd.hpp"
 #include "glad/gl.h"
+#ifdef __EMSCRIPTEN__
+#include "TextureShadow.h"
+#endif
 
 #include <memory>
 #include <vector>
@@ -261,6 +264,7 @@ namespace RTE {
 		std::shared_ptr<RenderTarget> m_ScreenBuffer{};
 #ifdef __EMSCRIPTEN__
 		std::shared_ptr<RenderTarget> m_BrowserCompositeBuffer{};
+		TextureShadow m_BackBuffer32Shadow; //!< What m_BackBuffer32Texture holds, so that a frame sends only the pixels that changed.
 #endif
 		std::unique_ptr<SDL_Rect> m_PrimaryWindowViewport; //!< Viewport for the main window.
 

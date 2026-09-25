@@ -2,6 +2,9 @@
 #include <vector>
 #include "raylib/raylib.h"
 #include "Box.h"
+#ifdef __EMSCRIPTEN__
+#include "TextureShadow.h"
+#endif
 struct BITMAP;
 namespace RTE {
 	/// BigTexture for big BITMAPS
@@ -23,6 +26,9 @@ namespace RTE {
 		std::vector<Texture2D> m_Textures{}; //!< The tiles of this BigTexture.
 		std::vector<unsigned int> m_UploadBuffers{}; //!< Upload buffers to reduce wait time on big uploads.
 		std::vector<Box> m_Regions{}; //!< The offset regions of each tile.
+#ifdef __EMSCRIPTEN__
+		std::vector<TextureShadow> m_Shadows{}; //!< What each tile holds, so that an update sends only the pixels that changed.
+#endif
 		BITMAP* m_Bitmap{nullptr}; //!< The memory BITMAP, not owned.
 		int m_Width{0}; //!< The total width of this texture.
 		int m_Height{0}; //!< The total height of this texture.
