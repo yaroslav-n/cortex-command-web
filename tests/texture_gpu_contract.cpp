@@ -1,6 +1,7 @@
 #include <SDL3/SDL.h>
 #include "allegro.h"
 #include "BigTexture.h"
+#include "TextureShadow.h"
 #include "GLResourceMan.h"
 #include "FramebufferReadback.h"
 #include "raylib/rlgl.h"
@@ -91,12 +92,96 @@ int main(int,char**){
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER,0);glBindTexture(GL_TEXTURE_2D,0);glActiveTexture(GL_TEXTURE0);
   verify({0,0,11,9},2);check(preserved,"partial upload ignores the caller's unpack state and leaves the original's");
   glDeleteBuffers(1,&priorBuffer);glDeleteTextures(1,&priorTexture);
+  // Updates send only the pixels that changed. A texel altered behind BigTexture's back
+  // shows that: an update with no bitmap pixel changed leaves it as it is.
+  // (Checks compare the GPU with the bitmap, so the bitmap briefly holds what the GPU should.)
+  auto setPixel=[&](int x,int y,const unsigned char* value){for(int c=0;c<channels;++c)bitmap->line[y][x*channels+c]=value[c];};
+  auto getPixel=[&](int x,int y,unsigned char* value){for(int c=0;c<channels;++c)value[c]=bitmap->line[y][x*channels+c];};
+  const unsigned char marker[4]={7,77,177,250},fresh[4]={31,63,127,191};unsigned char original[4],changed[4];
+  glBindTexture(GL_TEXTURE_2D,textures[1]);glPixelStorei(GL_UNPACK_ALIGNMENT,1);
+  glTexSubImage2D(GL_TEXTURE_2D,0,2,2,1,1,depth==8?GL_RED:GL_RGBA,GL_UNSIGNED_BYTE,marker);glBindTexture(GL_TEXTURE_2D,0);
+  tiled.Update(Box(Vector(0,0),11,9));
+  getPixel(6,2,original);setPixel(6,2,marker);verify({0,0,11,9},1);setPixel(6,2,original);
+  check(glGetError()==GL_NO_ERROR,"clean GL state after an unchanged update");
+  setPixel(6,2,fresh);tiled.Update(Box(Vector(0,0),11,9));verify({0,0,11,9},1);
+  // A change outside the updated area waits for an update that covers it.
+  getPixel(1,1,original);setPixel(1,1,fresh);getPixel(9,7,changed);changed[0]^=0x55;setPixel(9,7,changed);
+  tiled.Update(Box(Vector(8,6),3,3));
+  setPixel(1,1,original);verify({0,0,11,9},1);setPixel(1,1,fresh);
+  tiled.Update(Box(Vector(0,0),11,9));verify({0,0,11,9},1);
+  GLint rowLength;glGetIntegerv(GL_UNPACK_ROW_LENGTH,&rowLength);check(rowLength==0,"row length back at 0");
  }
  for(auto id:buffers)check(!glIsBuffer(id),"upload buffers destroyed");
  for(auto id:textures)check(!glIsTexture(id),"tile textures destroyed");
  destroy_bitmap(bitmap);
  }
+ // Changed rows far apart go up separately and near ones together; a change can sit
+ // anywhere in a row, at the bitmap's edges, or on either side of a tile boundary.
+ for(int depth:{8,32}) {
+ const int channels=depth/8;
+ auto* bitmap=create_bitmap_ex(depth,29,70);check(bitmap,"tall bitmap");
+ for(int y=0;y<70;++y)for(int x=0;x<29;++x)for(int c=0;c<channels;++c)bitmap->line[y][x*channels+c]=(3+y*7+x*5+c*41)&255;
+ BigTexture::s_MaxGLTextureSize=64;
+ {
+  BigTexture tall(bitmap);check(tall.m_Textures.size()==2,"a tile boundary at row 64");
+  auto verifyAll=[&](){
+   for(int top=0;top<70;top+=22){
+    const Rectangle source{0,float(top),29,float(std::min(22,70-top))};
+    glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);
+    tall.Draw(source,{3,2,source.width,source.height});rlDrawRenderBatchActive();
+    std::vector<unsigned char> pixels;check(ReadFramebufferRGBA(fb,32,24,pixels),"read GPU result");
+    for(int y=0;y<int(source.height);++y)for(int x=0;x<29;++x)for(int c=0;c<channels;++c){
+     const int expected=bitmap->line[top+y][x*channels+c],got=pixels[((y+2)*32+x+3)*4+c];
+     if(got!=expected){std::fprintf(stderr,"depth %d pixel %d,%d channel %d expected %d got %d\n",depth,x,top+y,c,expected,got);check(false,"changed rows on the GPU");}
+    }
+   }
+  };
+  tall.Update(Box(Vector(0,0),29,70));verifyAll();
+  const int changes[][2]={{0,0},{28,3},{14,10},{0,30},{28,31},{5,45},{27,46},{13,63},{14,64},{28,69},{0,69}};
+  for(auto& at:changes)for(int c=0;c<channels;++c)bitmap->line[at[1]][at[0]*channels+c]^=0xA5;
+  tall.Update(Box(Vector(0,0),29,70));verifyAll();
+  // Every row changed, in columns narrower than the bitmap.
+  for(int y=0;y<70;++y)for(int x=4;x<20;++x)for(int c=0;c<channels;++c)bitmap->line[y][x*channels+c]+=1;
+  tall.Update(Box(Vector(0,0),29,70));verifyAll();
+  check(glGetError()==GL_NO_ERROR,"clean GL state after changed rows");
+ }
+ destroy_bitmap(bitmap);
+ }
+ // The GUI layer's texture. A new WebGL texture is all zeros, so zero pixels need no
+ // upload; after the texture is made again and the copy reset, the rest goes up again.
+ {
+  auto* gui=create_bitmap_ex(32,20,10);check(gui,"GUI bitmap");clear_to_color(gui,0);
+  for(int x=0;x<20;x+=3)for(int c=0;c<4;++c)gui->line[x%10][x*4+c]=40+x*9+c;
+  GLuint texture;glGenTextures(1,&texture);
+  auto makeTexture=[&](){
+   glBindTexture(GL_TEXTURE_2D,texture);glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA,20,10,0,GL_RGBA,GL_UNSIGNED_BYTE,nullptr);
+   glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+  };
+  auto verifyGui=[&](){
+   glBindTexture(GL_TEXTURE_2D,0);glClearColor(0,0,0,1);glClear(GL_COLOR_BUFFER_BIT);
+   DrawTexturePro(Texture2D{texture,20,10,1,PIXELFORMAT_UNCOMPRESSED_R8G8B8A8},{0,0,20,10},{3,2,20,10},{0,0},0,{255,255,255,255});rlDrawRenderBatchActive();
+   std::vector<unsigned char> pixels;check(ReadFramebufferRGBA(fb,32,24,pixels),"read GPU result");
+   for(int y=0;y<10;++y)for(int x=0;x<20;++x)for(int c=0;c<4;++c){
+    const int expected=gui->line[y][x*4+c],got=pixels[((y+2)*32+x+3)*4+c];
+    if(got!=expected){std::fprintf(stderr,"GUI pixel %d,%d channel %d expected %d got %d\n",x,y,c,expected,got);check(false,"GUI layer on the GPU");}
+   }
+  };
+  TextureShadow shadow;check(shadow.IsEmpty(),"a copy starts unsized");
+  makeTexture();shadow.Reset(20,10,4);
+  glBindTexture(GL_TEXTURE_2D,texture);shadow.Upload(gui,0,0,20,10,0,0,GL_RGBA);verifyGui();
+  for(int c=0;c<4;++c){gui->line[0][0*4+c]=0;gui->line[4][7*4+c]=200+c;gui->line[9][19*4+c]=9;}
+  glBindTexture(GL_TEXTURE_2D,texture);shadow.Upload(gui,0,0,20,10,0,0,GL_RGBA);verifyGui();
+  makeTexture();shadow.Reset(20,10,4);
+  glBindTexture(GL_TEXTURE_2D,texture);shadow.Upload(gui,0,0,20,10,0,0,GL_RGBA);verifyGui();
+  // An area reaching past the texture or the bitmap is cut to fit.
+  for(int c=0;c<4;++c)gui->line[9][18*4+c]=77;
+  glBindTexture(GL_TEXTURE_2D,texture);shadow.Upload(gui,0,0,40,30,0,0,GL_RGBA);verifyGui();
+  shadow.Upload(gui,-1,0,20,10,0,0,GL_RGBA);shadow.Upload(gui,0,0,20,10,25,0,GL_RGBA);
+  check(glGetError()==GL_NO_ERROR,"clean GL state after GUI uploads");
+  GLint rowLength;glGetIntegerv(GL_UNPACK_ROW_LENGTH,&rowLength);check(rowLength==0,"GUI upload leaves row length at 0");
+  glDeleteTextures(1,&texture);destroy_bitmap(gui);
+ }
  glDeleteFramebuffers(1,&fb);glDeleteTextures(1,&color);
- std::puts("PASS: indexed and RGBA production tiled GPU upload/draw/readback, crops, scaling, partial updates and resource deletion");
+ std::puts("PASS: indexed and RGBA production tiled GPU upload/draw/readback, crops, scaling, partial updates, change-only uploads and resource deletion");
  return 0;
 }

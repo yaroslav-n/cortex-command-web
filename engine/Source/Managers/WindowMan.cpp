@@ -417,6 +417,10 @@ void WindowMan::CreateBackBufferTexture() {
 	GL_CHECK(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_ResX, m_ResY, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
 	GL_CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
 	GL_CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+#ifdef __EMSCRIPTEN__
+	// The texture is all zeros again.
+	m_BackBuffer32Shadow.Reset(m_ResX, m_ResY, 4);
+#endif
 }
 
 int WindowMan::GetWindowResX() {
@@ -1047,8 +1051,15 @@ void WindowMan::UploadFrame() {
 	//rlSetBlendMode(RL_BLEND_ALPHA);
 
 	GL_CHECK(glBindTexture(GL_TEXTURE_2D, m_BackBuffer32Texture));
+#ifdef __EMSCRIPTEN__
+	// The GUI layer is drawn again every frame but mostly comes out the same; send
+	// only the pixels that changed.
+	BITMAP* guiLayer = g_FrameMan.GetBackBuffer32();
+	m_BackBuffer32Shadow.Upload(guiLayer, 0, 0, guiLayer->w, guiLayer->h, 0, 0, GL_RGBA);
+#else
 	GL_CHECK(glPixelStorei(GL_UNPACK_ALIGNMENT, 4));
 	GL_CHECK(glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g_FrameMan.GetBackBuffer32()->w, g_FrameMan.GetBackBuffer32()->h, GL_RGBA, GL_UNSIGNED_BYTE, g_FrameMan.GetBackBuffer32()->line[0]));
+#endif
 
 	m_ScreenBlitShader->Begin();
 	rlSetUniformSampler(m_ScreenBlitShader->GetUniformLocation("rteGUITexture"), m_BackBuffer32Texture);

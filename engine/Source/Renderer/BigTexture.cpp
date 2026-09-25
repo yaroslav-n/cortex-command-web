@@ -85,9 +85,11 @@ BigTexture::BigTexture(BITMAP* bitmap) {
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 			m_UploadBuffers.emplace_back(uploadBuffer);
 #else
-			// Update takes the CPU staging path in the browser and never maps
-			// these, so allocating one per tile only costs time and GPU memory.
+			// Update reads straight out of the bitmap in the browser and never maps
+			// these, so allocating one per tile only costs time and GPU memory. The
+			// tile's copy is sized when it is first updated: some layers never are.
 			(void)bytesPerPixel;
+			m_Shadows.emplace_back();
 #endif
 			width -= s_MaxGLTextureSize;
 		}
@@ -139,21 +141,18 @@ void BigTexture::Update(const Box& updateRegion) {
 		Box intersect = updateRegion.GetIntersection(m_Regions[i]);
 		if (!intersect.IsEmpty()) {
 #ifdef __EMSCRIPTEN__
-			// WebGL cannot map GPU buffers. Upload the same rows from CPU staging memory.
-			const int width = static_cast<int>(std::ceil(intersect.m_Width));
-			const int height = static_cast<int>(std::ceil(intersect.m_Height));
-			std::vector<unsigned char> staging(width * height * bytesPerPixel);
-			for (int y = 0; y < height; ++y) {
-				std::memcpy(staging.data() + y * width * bytesPerPixel,
-				    m_Bitmap->line[y + intersect.m_Corner.GetFloorIntY()] + intersect.m_Corner.GetFloorIntX() * bytesPerPixel,
-				    width * bytesPerPixel);
+			// WebGL cannot map GPU buffers. Scene layers are updated over the whole
+			// screen every frame, most of it unchanged, so compare with what the tile
+			// holds and send only the changed pixels, read straight out of the bitmap.
+			TextureShadow& shadow = m_Shadows[i];
+			if (shadow.IsEmpty()) {
+				shadow.Reset(m_Textures[i].width, m_Textures[i].height, bytesPerPixel);
 			}
-			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+			const int x = intersect.m_Corner.GetFloorIntX();
+			const int y = intersect.m_Corner.GetFloorIntY();
 			glBindTexture(GL_TEXTURE_2D, m_Textures[i].id);
-			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-			glTexSubImage2D(GL_TEXTURE_2D, 0, intersect.m_Corner.GetFloorIntX() % s_MaxGLTextureSize,
-			    intersect.m_Corner.GetFloorIntY() % s_MaxGLTextureSize, width, height,
-			    bytesPerPixel == 1 ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, staging.data());
+			shadow.Upload(m_Bitmap, x, y, static_cast<int>(std::ceil(intersect.m_Width)), static_cast<int>(std::ceil(intersect.m_Height)),
+			              x % s_MaxGLTextureSize, y % s_MaxGLTextureSize, bytesPerPixel == 1 ? GL_RED : GL_RGBA);
 			glBindTexture(GL_TEXTURE_2D, 0);
 #else
 			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, m_UploadBuffers[i]);

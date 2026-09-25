@@ -164,6 +164,7 @@ set(CORTEX_ENGINE_SOURCES
   "${ENGINE}/Source/Renderer/RenderTarget.cpp"
   "${ENGINE}/Source/Renderer/Shader.cpp"
   "${ENGINE}/Source/Renderer/BigTexture.cpp"
+  "${ENGINE}/Source/Renderer/TextureShadow.cpp"
   "${ENGINE}/Source/Renderer/GLCheck.cpp"
   "${ENGINE}/Source/Renderer/GraphicalPrimitive.cpp"
   "${ENGINE}/Source/Renderer/Draw.cpp"

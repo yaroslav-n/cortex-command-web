@@ -59,7 +59,8 @@ only the setters misses most real mutation.
 Related source wart: the bodies of `GetFGColorBitmap` and `GetBGColorBitmap`
 place `SetUpdated()` *after* an unconditional `return`, so it is unreachable.
 This is **not** currently gating anything — `SceneLayerImpl::Draw` updates the
-visible regions of owned non-static layers on every draw regardless (see
+visible regions of owned non-static layers on every draw regardless (in the
+browser by comparing them with what the GPU already holds, see
 [rendering](rendering.md)) — but any future use of layer update flags must audit
 their real producers first.
 

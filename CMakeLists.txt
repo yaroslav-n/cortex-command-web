@@ -287,7 +287,9 @@ target_include_directories(texture_gpu_contract BEFORE PRIVATE "${CMAKE_CURRENT_
 target_include_directories(texture_gpu_contract PRIVATE ${CORTEX_ENGINE_INCLUDES} "${ENGINE}")
 target_compile_definitions(texture_gpu_contract PRIVATE RELEASE_BUILD NDEBUG IMGUI_IMPL_OPENGL_ES3 SYSTEM_MINIZIP)
 target_link_libraries(texture_gpu_contract PRIVATE cortex_engine cortex_loadpng cortex_sdl3_image cortex_minizip)
-target_link_options(texture_gpu_contract PRIVATE -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sEXIT_RUNTIME=1 -sSTACK_SIZE=8388608 -sINITIAL_MEMORY=536870912)
+# The game's memory cap, so uploads take the game's path through Emscripten's WebGL glue: above
+# 2 GB it hands WebGL a view sized from the unpack row length and alignment it tracks.
+target_link_options(texture_gpu_contract PRIVATE -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sEXIT_RUNTIME=1 -sSTACK_SIZE=8388608 -sINITIAL_MEMORY=536870912 -sMAXIMUM_MEMORY=4294967296)
 set_target_properties(texture_gpu_contract PROPERTIES SUFFIX ".js")
 configure_file(tests/texture-gpu-check.html "${CORTEX_DIST_DIR}/texture-gpu-check.html" COPYONLY)
 

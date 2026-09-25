@@ -3818,7 +3818,7 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.h port/Source/Manager
  		void UpdateMouseInput();
 diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Managers/WindowMan.cpp
 --- original/Source/Managers/WindowMan.cpp	2026-09-24 10:48:59
-+++ port/Source/Managers/WindowMan.cpp	2026-09-24 19:27:07
++++ port/Source/Managers/WindowMan.cpp	2026-09-25 14:03:22
 @@ -1,9 +1,11 @@
  #include "WindowMan.h"
 +#include "System.h"
@@ -4067,7 +4067,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	SDL_GL_SetSwapInterval(m_EnableVSync ? 1 : 0);
  #else
  	SDL_GL_SetSwapInterval(m_Fullscreen && m_EnableVSync ? 1 : 0);
-@@ -253,6 +410,9 @@
+@@ -253,10 +410,17 @@
  
  void WindowMan::CreateBackBufferTexture() {
  	m_ScreenBuffer = std::make_unique<RenderTarget>(FloatRect(0, 0, m_ResX, m_ResY), FloatRect(0, 0, m_ResX, m_ResY));
@@ -4077,7 +4077,15 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	GL_CHECK(glBindTexture(GL_TEXTURE_2D, m_BackBuffer32Texture));
  	GL_CHECK(glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, m_ResX, m_ResY, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr));
  	GL_CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
-@@ -282,7 +442,9 @@
+ 	GL_CHECK(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
++#ifdef __EMSCRIPTEN__
++	// The texture is all zeros again.
++	m_BackBuffer32Shadow.Reset(m_ResX, m_ResY, 4);
++#endif
+ }
+ 
+ int WindowMan::GetWindowResX() {
+@@ -282,7 +446,9 @@
  	int sdlEnableVSync = m_Fullscreen && m_EnableVSync ? 1 : 0;
  #endif
  
@@ -4087,7 +4095,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  }
  
  void WindowMan::RefocusWindow() const {
-@@ -520,7 +682,7 @@
+@@ -520,7 +686,7 @@
  			SDL_MaximizeWindow(m_PrimaryWindow.get());
  		} else {
  			SDL_RestoreWindow(m_PrimaryWindow.get());
@@ -4096,7 +4104,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  		}
  		SDL_SetWindowSize(m_PrimaryWindow.get(), newResX * newResMultiplier, newResY * newResMultiplier);
  		SDL_SetWindowBordered(m_PrimaryWindow.get(), true);
-@@ -554,6 +716,112 @@
+@@ -554,6 +720,112 @@
  	g_ConsoleMan.PrintString("SYSTEM: " + std::string(!recoveredToPreviousSettings ? "Switched to different resolution." : "Failed to switch to different resolution. Reverted to previous settings."));
  }
  
@@ -4209,7 +4217,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  void WindowMan::ToggleFullscreen() {
  	bool fullscreen = !m_Fullscreen;
  
-@@ -732,7 +1000,15 @@
+@@ -732,7 +1004,15 @@
  				break;
  			case SDL_EVENT_WINDOW_RESIZED:
  			case SDL_WINDOW_MAXIMIZED:
@@ -4225,7 +4233,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  				break;
  			default:
  				break;
-@@ -743,7 +1019,9 @@
+@@ -743,7 +1023,9 @@
  
  void WindowMan::ClearBackbuffer(bool clearFrameMan) {
  	GL_CHECK(glBindFramebuffer(GL_FRAMEBUFFER, 0));
@@ -4235,7 +4243,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	if (clearFrameMan) {
  		g_FrameMan.ClearBackBuffer32();
  	}
-@@ -755,9 +1033,15 @@
+@@ -755,16 +1037,29 @@
  }
  
  void WindowMan::UploadFrame() {
@@ -4253,7 +4261,21 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	rlDisableDepthTest();
  	rlDisableColorBlend();
  	//rlSetBlendMode(RL_BLEND_ALPHA);
-@@ -777,7 +1061,13 @@
+ 
+ 	GL_CHECK(glBindTexture(GL_TEXTURE_2D, m_BackBuffer32Texture));
++#ifdef __EMSCRIPTEN__
++	// The GUI layer is drawn again every frame but mostly comes out the same; send
++	// only the pixels that changed.
++	BITMAP* guiLayer = g_FrameMan.GetBackBuffer32();
++	m_BackBuffer32Shadow.Upload(guiLayer, 0, 0, guiLayer->w, guiLayer->h, 0, 0, GL_RGBA);
++#else
+ 	GL_CHECK(glPixelStorei(GL_UNPACK_ALIGNMENT, 4));
+ 	GL_CHECK(glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, g_FrameMan.GetBackBuffer32()->w, g_FrameMan.GetBackBuffer32()->h, GL_RGBA, GL_UNSIGNED_BYTE, g_FrameMan.GetBackBuffer32()->line[0]));
++#endif
+ 
+ 	m_ScreenBlitShader->Begin();
+ 	rlSetUniformSampler(m_ScreenBlitShader->GetUniformLocation("rteGUITexture"), m_BackBuffer32Texture);
+@@ -777,7 +1072,13 @@
  		DrawTextureRec(m_ScreenBuffer->GetColorTexture(), {0.0f, 0.0f, static_cast<float>(m_ResX), -static_cast<float>(m_ResY)}, {0, 0}, {255, 255, 255, 255});
  	}
  	m_ScreenBlitShader->End();
@@ -4268,7 +4290,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  
  	rlDisableColorBlend();
  	if (m_MultiDisplayWindows.empty()) {
-@@ -787,7 +1077,7 @@
+@@ -787,7 +1088,7 @@
  		rlMatrixMode(RL_MODELVIEW);
  		rlLoadIdentity();
  		GL_CHECK(glViewport(m_PrimaryWindowViewport->x, m_PrimaryWindowViewport->y, m_PrimaryWindowViewport->w, m_PrimaryWindowViewport->h));
@@ -4277,7 +4299,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  		rlDrawRenderBatchActive();
  	} else {
  		for (size_t i = 0; i < m_MultiDisplayWindows.size(); ++i) {
-@@ -801,12 +1091,30 @@
+@@ -801,12 +1102,30 @@
  			rlLoadIdentity();
  			rlOrtho(0, windowW, windowH, 0, -1.0, 1.0);
  
@@ -4309,7 +4331,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	Present();
  	TracyGpuCollect;
  	FrameMark;
-@@ -816,12 +1124,60 @@
+@@ -816,12 +1135,60 @@
  }
  
  void WindowMan::Present() {
@@ -4374,8 +4396,18 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  }
 diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Managers/WindowMan.h
 --- original/Source/Managers/WindowMan.h	2026-09-24 10:48:59
-+++ port/Source/Managers/WindowMan.h	2026-09-24 23:20:18
-@@ -97,6 +97,17 @@
++++ port/Source/Managers/WindowMan.h	2026-09-25 14:03:13
+@@ -3,6 +3,9 @@
+ #include "Singleton.h"
+ #include "glm/fwd.hpp"
+ #include "glad/gl.h"
++#ifdef __EMSCRIPTEN__
++#include "TextureShadow.h"
++#endif
+ 
+ #include <memory>
+ #include <vector>
+@@ -97,6 +100,17 @@
  		/// @return What multiple the game resolution is currently sized at.
  		float GetResMultiplier() const { return m_ResMultiplier; }
  
@@ -4393,7 +4425,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Manager
  		/// Gets whether VSync is enabled.
  		/// @return Whether VSync is enabled.
  		bool GetVSyncEnabled() const { return m_EnableVSync; }
-@@ -133,6 +144,15 @@
+@@ -133,6 +147,15 @@
  		/// @return The screen buffer texture.
  		std::shared_ptr<RenderTarget> GetScreenBuffer() const { return m_ScreenBuffer; }
  
@@ -4409,7 +4441,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Manager
  		void RefocusWindow() const;
  #pragma endregion
  
-@@ -160,6 +180,45 @@
+@@ -160,6 +183,45 @@
  		/// @param displaysAlreadyMapped Whether to skip mapping displays because they were already mapped elsewhere.
  		void ChangeResolution(int newResX, int newResY, float newResMultiplier = 1.0f, bool fullscreen = false, bool displaysAlreadyMapped = false);
  
@@ -4455,17 +4487,18 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Manager
  		/// Toggles between windowed and fullscreen mode (single display).
  		void ToggleFullscreen();
  
-@@ -200,6 +259,9 @@
+@@ -200,6 +262,10 @@
  		GLuint m_BackBuffer32Texture; //!< Streaming texture for the software rendered stuff.
  		
  		std::shared_ptr<RenderTarget> m_ScreenBuffer{};
 +#ifdef __EMSCRIPTEN__
 +		std::shared_ptr<RenderTarget> m_BrowserCompositeBuffer{};
++		TextureShadow m_BackBuffer32Shadow; //!< What m_BackBuffer32Texture holds, so that a frame sends only the pixels that changed.
 +#endif
  		std::unique_ptr<SDL_Rect> m_PrimaryWindowViewport; //!< Viewport for the main window.
  
  		std::vector<std::shared_ptr<SDL_Window>> m_MultiDisplayWindows; //!< Additional windows for multi-display fullscreen.
-@@ -232,6 +294,12 @@
+@@ -232,6 +298,12 @@
  		int m_ResX; //!< Game window width.
  		int m_ResY; //!< Game window height.
  		float m_ResMultiplier; //!< The number of times the game window and image should be multiplied and stretched across for better visibility.
@@ -5604,7 +5637,7 @@ diff -ruP --exclude=*.o original/Source/Menus/TitleScreen.cpp port/Source/Menus/
  void TitleScreen::DrawGameLogo() {
 diff -ruP --exclude=*.o original/Source/Renderer/BigTexture.cpp port/Source/Renderer/BigTexture.cpp
 --- original/Source/Renderer/BigTexture.cpp	2026-09-24 10:48:59
-+++ port/Source/Renderer/BigTexture.cpp	2026-09-24 06:17:01
++++ port/Source/Renderer/BigTexture.cpp	2026-09-25 14:03:01
 @@ -1,4 +1,5 @@
  #include "BigTexture.h"
 +#include "TextureTileMapping.h"
@@ -5655,7 +5688,7 @@ diff -ruP --exclude=*.o original/Source/Renderer/BigTexture.cpp port/Source/Rend
  	if (!s_MaxGLTextureSize) {
  		glGetIntegerv(GL_MAX_TEXTURE_SIZE, &s_MaxGLTextureSize);
  		s_MaxGLTextureSize /= 2;
-@@ -35,17 +72,23 @@
+@@ -35,17 +72,25 @@
  			    regionWidth,
  			    regionHeight);
  			m_Textures.emplace_back(
@@ -5673,14 +5706,16 @@ diff -ruP --exclude=*.o original/Source/Renderer/BigTexture.cpp port/Source/Rend
  			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
  			m_UploadBuffers.emplace_back(uploadBuffer);
 +#else
-+			// Update takes the CPU staging path in the browser and never maps
-+			// these, so allocating one per tile only costs time and GPU memory.
++			// Update reads straight out of the bitmap in the browser and never maps
++			// these, so allocating one per tile only costs time and GPU memory. The
++			// tile's copy is sized when it is first updated: some layers never are.
 +			(void)bytesPerPixel;
++			m_Shadows.emplace_back();
 +#endif
  			width -= s_MaxGLTextureSize;
  		}
  		height -= s_MaxGLTextureSize;
-@@ -53,6 +96,7 @@
+@@ -53,6 +98,7 @@
  }
  
  BigTexture::~BigTexture() {
@@ -5688,7 +5723,7 @@ diff -ruP --exclude=*.o original/Source/Renderer/BigTexture.cpp port/Source/Rend
  	for (Texture2D& texture: m_Textures) {
  		glDeleteTextures(1, &texture.id);
  	}
-@@ -61,40 +105,14 @@
+@@ -61,40 +107,14 @@
  void BigTexture::Draw(Rectangle source, Rectangle dest) {
  	ZoneScoped;
  	TracyGpuZone("BigTexture::Draw");
@@ -5735,7 +5770,7 @@ diff -ruP --exclude=*.o original/Source/Renderer/BigTexture.cpp port/Source/Rend
  }
  
  void BigTexture::Update(const Box& updateRegion) {
-@@ -104,10 +122,40 @@
+@@ -104,10 +124,37 @@
  		m_Bitmap->extra = reinterpret_cast<void*>(g_GLResourceMan.MakeBitmapInfo());
  	}
  	int bytesPerPixel = bitmap_color_depth(m_Bitmap) / 8;
@@ -5757,27 +5792,24 @@ diff -ruP --exclude=*.o original/Source/Renderer/BigTexture.cpp port/Source/Rend
  		Box intersect = updateRegion.GetIntersection(m_Regions[i]);
  		if (!intersect.IsEmpty()) {
 +#ifdef __EMSCRIPTEN__
-+			// WebGL cannot map GPU buffers. Upload the same rows from CPU staging memory.
-+			const int width = static_cast<int>(std::ceil(intersect.m_Width));
-+			const int height = static_cast<int>(std::ceil(intersect.m_Height));
-+			std::vector<unsigned char> staging(width * height * bytesPerPixel);
-+			for (int y = 0; y < height; ++y) {
-+				std::memcpy(staging.data() + y * width * bytesPerPixel,
-+				    m_Bitmap->line[y + intersect.m_Corner.GetFloorIntY()] + intersect.m_Corner.GetFloorIntX() * bytesPerPixel,
-+				    width * bytesPerPixel);
++			// WebGL cannot map GPU buffers. Scene layers are updated over the whole
++			// screen every frame, most of it unchanged, so compare with what the tile
++			// holds and send only the changed pixels, read straight out of the bitmap.
++			TextureShadow& shadow = m_Shadows[i];
++			if (shadow.IsEmpty()) {
++				shadow.Reset(m_Textures[i].width, m_Textures[i].height, bytesPerPixel);
 +			}
-+			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
++			const int x = intersect.m_Corner.GetFloorIntX();
++			const int y = intersect.m_Corner.GetFloorIntY();
 +			glBindTexture(GL_TEXTURE_2D, m_Textures[i].id);
-+			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-+			glTexSubImage2D(GL_TEXTURE_2D, 0, intersect.m_Corner.GetFloorIntX() % s_MaxGLTextureSize,
-+			    intersect.m_Corner.GetFloorIntY() % s_MaxGLTextureSize, width, height,
-+			    bytesPerPixel == 1 ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, staging.data());
++			shadow.Upload(m_Bitmap, x, y, static_cast<int>(std::ceil(intersect.m_Width)), static_cast<int>(std::ceil(intersect.m_Height)),
++			              x % s_MaxGLTextureSize, y % s_MaxGLTextureSize, bytesPerPixel == 1 ? GL_RED : GL_RGBA);
 +			glBindTexture(GL_TEXTURE_2D, 0);
 +#else
  			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, m_UploadBuffers[i]);
  			size_t pixelsSize = std::ceil(intersect.m_Width) * std::ceil(intersect.m_Height) * bytesPerPixel;
  			unsigned char* pixels = (unsigned char*)glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, (intersect.m_Corner.GetFloorIntY() %s_MaxGLTextureSize) * m_Textures[i].width + intersect.m_Corner.GetFloorIntX() % s_MaxGLTextureSize, pixelsSize, GL_MAP_WRITE_BIT|GL_MAP_INVALIDATE_BUFFER_BIT);
-@@ -138,6 +186,7 @@
+@@ -138,6 +185,7 @@
  
  			glBindTexture(GL_TEXTURE_2D, 0);
  			glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
@@ -5785,6 +5817,29 @@ diff -ruP --exclude=*.o original/Source/Renderer/BigTexture.cpp port/Source/Rend
  		}
  	}
  }
+diff -ruP --exclude=*.o original/Source/Renderer/BigTexture.h port/Source/Renderer/BigTexture.h
+--- original/Source/Renderer/BigTexture.h	2026-09-24 10:48:59
++++ port/Source/Renderer/BigTexture.h	2026-09-25 14:02:51
+@@ -2,6 +2,9 @@
+ #include <vector>
+ #include "raylib/raylib.h"
+ #include "Box.h"
++#ifdef __EMSCRIPTEN__
++#include "TextureShadow.h"
++#endif
+ struct BITMAP;
+ namespace RTE {
+ 	/// BigTexture for big BITMAPS
+@@ -23,6 +26,9 @@
+ 		std::vector<Texture2D> m_Textures{}; //!< The tiles of this BigTexture.
+ 		std::vector<unsigned int> m_UploadBuffers{}; //!< Upload buffers to reduce wait time on big uploads.
+ 		std::vector<Box> m_Regions{}; //!< The offset regions of each tile.
++#ifdef __EMSCRIPTEN__
++		std::vector<TextureShadow> m_Shadows{}; //!< What each tile holds, so that an update sends only the pixels that changed.
++#endif
+ 		BITMAP* m_Bitmap{nullptr}; //!< The memory BITMAP, not owned.
+ 		int m_Width{0}; //!< The total width of this texture.
+ 		int m_Height{0}; //!< The total height of this texture.
 diff -ruP --exclude=*.o original/Source/Renderer/BrowserShaderSource.h port/Source/Renderer/BrowserShaderSource.h
 --- original/Source/Renderer/BrowserShaderSource.h	1970-01-01 10:00:00
 +++ port/Source/Renderer/BrowserShaderSource.h	2026-09-20 00:07:53
@@ -6051,6 +6106,188 @@ diff -ruP --exclude=*.o original/Source/Renderer/Shader.cpp port/Source/Renderer
  
  	GL_CHECK(glDetachShader(m_ProgramID, vtxShader));
  	GL_CHECK(glDetachShader(m_ProgramID, fragShader));
+diff -ruP --exclude=*.o original/Source/Renderer/TextureShadow.cpp port/Source/Renderer/TextureShadow.cpp
+--- original/Source/Renderer/TextureShadow.cpp	1970-01-01 10:00:00
++++ port/Source/Renderer/TextureShadow.cpp	2026-09-25 13:59:37
+@@ -0,0 +1,128 @@
++#include "TextureShadow.h"
++#include "allegro.h"
++
++#include <algorithm>
++#include <cstddef>
++#include <cstdint>
++#include <cstring>
++
++using namespace RTE;
++
++namespace {
++	// Changed rows closer together than this go up in one upload: a call costs more than
++	// sending a few unchanged rows with it.
++	constexpr int c_MaxRowGap = 16;
++
++	// Rows that match are the usual case, so these compare 32 bytes a step. The C library's
++	// memcmp compares words only when both rows start word-aligned, which a scene area rarely does.
++	bool SameBlock(const unsigned char* a, const unsigned char* b) {
++		std::uint64_t a0, a1, a2, a3, b0, b1, b2, b3;
++		std::memcpy(&a0, a, 8);
++		std::memcpy(&a1, a + 8, 8);
++		std::memcpy(&a2, a + 16, 8);
++		std::memcpy(&a3, a + 24, 8);
++		std::memcpy(&b0, b, 8);
++		std::memcpy(&b1, b + 8, 8);
++		std::memcpy(&b2, b + 16, 8);
++		std::memcpy(&b3, b + 24, 8);
++		return ((a0 ^ b0) | (a1 ^ b1) | (a2 ^ b2) | (a3 ^ b3)) == 0;
++	}
++
++	/// The index of the first byte where two rows differ, or size if they match.
++	std::size_t FirstDifference(const unsigned char* a, const unsigned char* b, std::size_t size) {
++		std::size_t i = 0;
++		while (i + 32 <= size && SameBlock(a + i, b + i)) {
++			i += 32;
++		}
++		while (i < size && a[i] == b[i]) {
++			++i;
++		}
++		return i;
++	}
++
++	/// One past the index of the last byte where two rows differ, or 0 if they match.
++	std::size_t EndOfDifference(const unsigned char* a, const unsigned char* b, std::size_t size) {
++		std::size_t end = size;
++		while (end >= 32 && SameBlock(a + end - 32, b + end - 32)) {
++			end -= 32;
++		}
++		while (end > 0 && a[end - 1] == b[end - 1]) {
++			--end;
++		}
++		return end;
++	}
++} // namespace
++
++void TextureShadow::Reset(int width, int height, int bytesPerPixel) {
++	m_Width = std::max(width, 0);
++	m_Height = std::max(height, 0);
++	m_BytesPerPixel = std::max(bytesPerPixel, 0);
++	m_Pixels.assign(static_cast<std::size_t>(m_Width) * m_Height * m_BytesPerPixel, 0);
++}
++
++void TextureShadow::Upload(const BITMAP* bitmap, int x, int y, int width, int height, int textureX, int textureY, GLenum format) {
++	if (m_Pixels.empty() || x < 0 || y < 0 || textureX < 0 || textureY < 0) {
++		return;
++	}
++	width = std::min({width, bitmap->w - x, m_Width - textureX});
++	height = std::min({height, bitmap->h - y, m_Height - textureY});
++	if (width <= 0 || height <= 0) {
++		return;
++	}
++
++	const std::size_t pixelSize = m_BytesPerPixel;
++	const std::size_t areaRowSize = static_cast<std::size_t>(width) * pixelSize;
++	const std::size_t copyPitch = static_cast<std::size_t>(m_Width) * pixelSize;
++	// Allegro's memory bitmaps space their rows evenly, and a sub-bitmap's rows as its parent's,
++	// so GL can read an area straight out of the bitmap given the row length.
++	const std::ptrdiff_t bitmapPitch = bitmap->h > 1 ? bitmap->line[1] - bitmap->line[0] : static_cast<std::ptrdiff_t>(bitmap->w) * pixelSize;
++
++	bool unpackStateSet = false;
++	int runTop = -1; // The first row of the changed rows not sent yet, or -1 if there are none.
++	int runBottom = 0; // One past the last of those rows.
++	int runLeft = 0; // The leftmost changed pixel in those rows.
++	int runRight = 0; // One past the rightmost.
++	auto sendRun = [&]() {
++		if (!unpackStateSet) {
++			glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
++			glPixelStorei(GL_UNPACK_ROW_LENGTH, static_cast<GLint>(bitmapPitch / static_cast<std::ptrdiff_t>(pixelSize)));
++			unpackStateSet = true;
++		}
++		glTexSubImage2D(GL_TEXTURE_2D, 0, textureX + runLeft, textureY + runTop, runRight - runLeft, runBottom - runTop, format, GL_UNSIGNED_BYTE,
++		                bitmap->line[y + runTop] + static_cast<std::size_t>(x + runLeft) * pixelSize);
++		runTop = -1;
++	};
++
++	for (int row = 0; row < height; ++row) {
++		const unsigned char* source = bitmap->line[y + row] + static_cast<std::size_t>(x) * pixelSize;
++		unsigned char* copy = m_Pixels.data() + static_cast<std::size_t>(textureY + row) * copyPitch + static_cast<std::size_t>(textureX) * pixelSize;
++		const std::size_t first = FirstDifference(source, copy, areaRowSize);
++		if (first == areaRowSize) {
++			if (runTop >= 0 && row + 1 - runBottom >= c_MaxRowGap) {
++				sendRun();
++			}
++			continue;
++		}
++		const std::size_t end = first + EndOfDifference(source + first, copy + first, areaRowSize - first);
++		// The bytes around this span already match, so the copy now matches the whole row.
++		std::memcpy(copy + first, source + first, end - first);
++
++		const int left = static_cast<int>(first / pixelSize);
++		const int right = static_cast<int>((end + pixelSize - 1) / pixelSize);
++		if (runTop < 0) {
++			runTop = row;
++			runLeft = left;
++			runRight = right;
++		} else {
++			runLeft = std::min(runLeft, left);
++			runRight = std::max(runRight, right);
++		}
++		runBottom = row + 1;
++	}
++	if (runTop >= 0) {
++		sendRun();
++	}
++	if (unpackStateSet) {
++		glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
++	}
++}
+diff -ruP --exclude=*.o original/Source/Renderer/TextureShadow.h port/Source/Renderer/TextureShadow.h
+--- original/Source/Renderer/TextureShadow.h	1970-01-01 10:00:00
++++ port/Source/Renderer/TextureShadow.h	2026-09-25 14:32:22
+@@ -0,0 +1,46 @@
++#pragma once
++#include "glad/gl.h"
++
++#include <vector>
++
++struct BITMAP;
++
++namespace RTE {
++	/// A copy of what a texture holds, so that uploading to it sends only the pixels that changed.
++	/// In the browser every upload is copied twice more, into memory shared with the GPU process
++	/// and by that process into the texture, so comparing a screenful against this copy costs less
++	/// than sending it again. A new WebGL texture is all zeros, and so is a new copy: the two stay
++	/// the same as long as every upload to the texture goes through Upload.
++	class TextureShadow {
++	public:
++		/// Sizes this for a texture that was just created, or created again, without data.
++		/// @param width The texture's width in pixels.
++		/// @param height The texture's height in pixels.
++		/// @param bytesPerPixel Bytes in one pixel of the texture and of the bitmaps uploaded to it.
++		void Reset(int width, int height, int bytesPerPixel);
++
++		/// Whether Reset has not sized this for a texture yet.
++		bool IsEmpty() const { return m_Pixels.empty(); }
++
++		/// Uploads the pixels of an area of a bitmap that differ from what the texture holds, to the
++		/// texture bound to GL_TEXTURE_2D. No pixel unpack buffer may be bound, and GL_UNPACK_SKIP_ROWS
++		/// and GL_UNPACK_SKIP_PIXELS must be 0. Leaves GL_UNPACK_ROW_LENGTH at 0, and GL_UNPACK_ALIGNMENT
++		/// at 1 if anything was sent. Parts of the area past the right or bottom edge of the bitmap or
++		/// the texture are left out; an area with a negative position is ignored.
++		/// @param bitmap The memory bitmap to upload from, with this copy's bytes per pixel.
++		/// @param x The left of the area in the bitmap.
++		/// @param y The top of the area in the bitmap.
++		/// @param width The width of the area.
++		/// @param height The height of the area.
++		/// @param textureX Where the area's left lands in the texture.
++		/// @param textureY Where the area's top lands in the texture.
++		/// @param format The pixel format of the bitmap's data, such as GL_RED or GL_RGBA.
++		void Upload(const BITMAP* bitmap, int x, int y, int width, int height, int textureX, int textureY, GLenum format);
++
++	private:
++		std::vector<unsigned char> m_Pixels; //!< The texture's pixels, in rows without padding.
++		int m_Width = 0; //!< The texture's width in pixels.
++		int m_Height = 0; //!< The texture's height in pixels.
++		int m_BytesPerPixel = 0; //!< Bytes in one pixel.
++	};
++} // namespace RTE
 diff -ruP --exclude=*.o original/Source/Renderer/TextureTileMapping.h port/Source/Renderer/TextureTileMapping.h
 --- original/Source/Renderer/TextureTileMapping.h	1970-01-01 10:00:00
 +++ port/Source/Renderer/TextureTileMapping.h	2026-09-21 02:34:05

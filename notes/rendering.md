@@ -1,10 +1,10 @@
 # Rendering and player views
 
-Updated 2026-09-24.
+Updated 2026-09-25.
 
 Entry points: `engine/Source/Managers/FrameMan.cpp`,
 `PostProcessMan.cpp`, `WindowMan.cpp`, `CameraMan.cpp`,
-`engine/Source/Renderer/` (`BigTexture.cpp`, `Shader.cpp`,
+`engine/Source/Renderer/` (`BigTexture.cpp`, `TextureShadow.cpp`, `Shader.cpp`,
 `BrowserShaderSource.h`, vendored `raylib/rlgl.c`).
 Tests: `tests/frame_readback_contract.cpp`, `texture_tile_contract.cpp`,
 `texture_gpu_contract.cpp`.
@@ -150,6 +150,39 @@ bitmap never changes after the initial upload. (The `SetUpdated` calls after
 `return` in `SLTerrain`'s FG/BG getters are unreachable dead code, but they are
 not the cause of anything.)
 
+### Only changed pixels go up (browser)
+
+Every frame therefore asks for each dynamic layer's whole visible area, and
+`WindowMan::UploadFrame` sends the whole GUI layer (`FrameMan`'s 32-bit back
+buffer). In the browser each upload is copied twice more, into memory shared with
+the GPU process and by that process into the texture, so a still screen kept
+Chrome's GPU process busy re-sending what the textures already held.
+
+`TextureShadow` (`Renderer/TextureShadow.cpp`) keeps a copy of what a texture
+holds: one per `BigTexture` tile, sized on the tile's first update, and one for
+the GUI texture, reset whenever `CreateBackBufferTexture` makes that texture
+again. An upload compares the requested area with the copy row by row, 32 bytes a
+step, and sends only the rows that differ, cut to their changed columns; changed
+rows fewer than 16 apart go up in one call. Rows are read straight out of the
+bitmap with `GL_UNPACK_ROW_LENGTH` set to its pitch, so `Update` no longer copies
+them into a staging buffer first. Dirty flags could not do this: terrain is
+written through raw bitmap pointers all over the engine (see
+[terrain](terrain.md)), and the GUI layer is cleared and drawn again every frame.
+
+Two things keep the copy true. A new WebGL texture is all zeros, and so is a new
+copy. And nothing else writes these textures: any other upload to them must reset
+the copy, or a later frame skips pixels the texture no longer has.
+
+Measured on the Metal instance (A/B against the build before, same origin, 10 s
+traces, 2026-09-25): at 1920×993 (960×471 at scale 2), the time Chrome's GPU
+process spends on the game's commands fell from 1.71 to 1.30 ms a frame at the
+main menu and from 1.14 to 0.70 in the Tutorial Mission; at 1280×633 from 1.35 to
+1.00 and 0.94 to 0.64. The main thread was unchanged within noise: comparing costs
+about what the staging copy did for the terrain, and about 0.04 ms a frame more
+for the GUI layer. The copies cost memory, one byte per scene pixel for each
+indexed layer drawn (terrain FG and BG, the MO colour layer): about 54 MiB on
+Decision Day, the largest shipped scene.
+
 ### Tile coordinate mapping
 
 `Draw` used to pass a whole-bitmap intersection straight to each tile as its
@@ -167,7 +200,7 @@ edge tiles, non-intersection and zero source width.
 ### GL state hygiene — the recurring trap
 
 **Pixel-unpack settings are context state, not texture properties.** `BigTexture`
-stages tightly packed rows, so a caller's non-zero `GL_UNPACK_ROW_LENGTH`,
+sets the row length for each of its uploads, so a caller's non-zero `GL_UNPACK_ROW_LENGTH`,
 `GL_UNPACK_SKIP_ROWS` or `GL_UNPACK_SKIP_PIXELS` must not affect its upload — and
 it must not clobber the caller's bindings either. `Update` previously set only
 alignment and overwrote the caller's texture and unpack-buffer bindings.
@@ -203,8 +236,8 @@ and `SceneLayer` wraps supplied bitmaps, so callers genuinely do supply both
 depths — allocation must use the computed format.
 
 The destructor deletes its upload-buffer objects as well as its textures; it used
-to leak the buffers. The browser path uses CPU staging and never maps them, so it
-does not allocate them at all.
+to leak the buffers. The browser path reads straight out of the bitmap and never
+maps them, so it does not allocate them at all.
 
 ## Image dumps
 
@@ -264,6 +297,15 @@ pixel-store state: construction must restore all six values plus the active unit
 and a partial update must upload correctly regardless and leave the packed
 layout with nothing bound on the unchanged unit.
 
+For change-only uploads it alters a texel behind `BigTexture`'s back, which an
+update with nothing changed must leave alone; checks that a change outside the
+updated area waits for an update that covers it; sends scattered changes, far
+apart and near, at the edges and on both sides of a tile boundary, in a 29×70
+bitmap; and checks the GUI texture's copy: zero pixels need no upload into a new
+texture, and after the texture is made again the rest goes up again. It is linked
+with the game's 4 GB memory cap, which makes Emscripten size each upload's view
+from the tracked row length, as it does in the game.
+
 `frame_readback_contract` verifies exact RGBA and alpha, orientation and GL state
 restoration for framebuffer readback, which is what the screenshot function
 (`FrameMan::SaveScreenToBitmap`) uses.
@@ -298,6 +340,6 @@ thread is now idle about three quarters of each frame.
 - **Context loss recovery** is unimplemented and untested.
 - The **native mapped-buffer** update path uses some pixel offsets as byte
   offsets — its source X offset omits multiplication by bytes per pixel. The
-  browser CPU staging path multiplies correctly. This needs a native upload
+  browser path multiplies correctly. This needs a native upload
   regression before anyone calls the native path verified.
 - Local split-screen fog behaviour is unverified.
