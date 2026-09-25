@@ -245,8 +245,9 @@ void BaseEditor::Update() {
 		if (m_NeedSave)
 			SaveScene(g_SceneMan.GetScene()->GetPresetName());
 
-		// Quit to metagame view
-		g_ActivityMan.PauseActivity();
+		// Quit to metagame view. Upstream pauses into the pause menu here, whose Resume
+		// returns to this editor, made INACTIVE just above, where no click works any more.
+		g_ActivityMan.PauseActivity(true, true);
 	}
 }
 

@@ -5,6 +5,9 @@
 #include "UInputMan.h"
 #include "PresetMan.h"
 #include "MetaMan.h"
+#ifdef __EMSCRIPTEN__
+#include "AudioMan.h"
+#endif
 
 #include "GUI.h"
 #include "AllegroScreen.h"
@@ -87,7 +90,9 @@ void MenuMan::SetActiveMenu() {
 				g_MetaMan.GetGUI()->SetEnabled();
 				break;
 			case ActiveMenu::PauseMenuActive:
+#ifndef __EMSCRIPTEN__
 				m_PauseMenu->EnableOrDisablePauseMenuFeatures();
+#endif
 				if (g_MetaMan.GameInProgress()) {
 					m_PauseMenu->SetBackButtonTargetName("Conquest");
 				} else {
@@ -97,6 +102,10 @@ void MenuMan::SetActiveMenu() {
 						m_PauseMenu->SetBackButtonTargetName("Scenario");
 					}
 				}
+#ifdef __EMSCRIPTEN__
+				// After the back button's name: the layout uses it, or replaces it in a lost scenario's menu.
+				m_PauseMenu->EnableOrDisablePauseMenuFeatures();
+#endif
 				break;
 			default:
 				break;
@@ -105,6 +114,12 @@ void MenuMan::SetActiveMenu() {
 }
 
 void MenuMan::HandleTransitionIntoMenuLoop() {
+#ifdef __EMSCRIPTEN__
+	// SetActiveMenu sets a menu up when it becomes active. Resume leaves the loop at once,
+	// so the pause menu stayed "active" and was not set up again at the next pause, which
+	// showed a scenario's buttons after it was lost.
+	m_ActiveMenu = ActiveMenu::MenusDisabled;
+#endif
 	if (g_MetaMan.GameInProgress()) {
 		if (g_ActivityMan.SkipPauseMenuWhenPausingActivity()) {
 			m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::MetaGameFadeIn);
@@ -117,7 +132,13 @@ void MenuMan::HandleTransitionIntoMenuLoop() {
 				// If we're in the editors or in online multiplayer then return to main menu instead of scenario menu.
 				m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::ScrollingFadeIn);
 			} else {
-				if (activity->IsOver() || g_ActivityMan.SkipPauseMenuWhenPausingActivity()) {
+#ifdef __EMSCRIPTEN__
+				// A lost scenario has a pause menu of its own (PauseMenuGUI) instead of the Scenario screen.
+				const bool activityOver = activity->IsOver() && !g_ActivityMan.ScenarioLost();
+#else
+				const bool activityOver = activity->IsOver();
+#endif
+				if (activityOver || g_ActivityMan.SkipPauseMenuWhenPausingActivity()) {
 					m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::ScenarioFadeIn);
 				} else {
 					m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::PauseMenu);
@@ -237,11 +258,27 @@ void MenuMan::UpdatePauseMenu() const {
 	switch (m_PauseMenu->Update()) {
 		case PauseMenuGUI::PauseMenuUpdateResult::ActivityResumed:
 			m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::TransitionEnd);
+#ifdef __EMSCRIPTEN__
+			// A game loaded from the pause menu is a new Activity, never paused, so the resume
+			// that follows would not clear the pause's music muffling.
+			g_AudioMan.SetMusicMuffledState(false);
+#endif
 			g_ActivityMan.SetResumeActivity(true);
 			break;
 		case PauseMenuGUI::PauseMenuUpdateResult::BackToMain:
 			m_TitleScreen->SetTitleTransitionState(g_MetaMan.GameInProgress() ? TitleScreen::TitleTransition::MetaGameFadeIn : TitleScreen::TitleTransition::ScenarioFadeIn);
 			break;
+#ifdef __EMSCRIPTEN__
+		case PauseMenuGUI::PauseMenuUpdateResult::ActivityRestarted:
+			// Out of the menu at once, as Resume does; the game loop then restarts the
+			// Activity (ActivityMan::RestartActivity), as the Scenario screen's start does.
+			// The pause muffled the music, and the resume that follows a start finds the
+			// new Activity unpaused, so it would not clear that.
+			m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::TransitionEnd);
+			g_AudioMan.SetMusicMuffledState(false);
+			g_ActivityMan.SetRestartActivity();
+			break;
+#endif
 		default:
 			break;
 	}

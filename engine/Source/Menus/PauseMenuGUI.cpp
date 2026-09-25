@@ -4,6 +4,9 @@
 #include "FrameMan.h"
 #include "ConsoleMan.h"
 #include "ActivityMan.h"
+#ifdef __EMSCRIPTEN__
+#include "MetaMan.h"
+#endif
 #include "UInputMan.h"
 #include "SettingsMan.h"
 
@@ -42,6 +45,11 @@ void PauseMenuGUI::Clear() {
 
 	m_SavingButtonsDisabled = false;
 	m_ModManagerButtonDisabled = false;
+#ifdef __EMSCRIPTEN__
+	m_BackButtonTargetName = "Main";
+	m_ScenarioLostLayout = false;
+	m_ButtonsCentreY = 0;
+#endif
 
 	m_PauseMenuBox = nullptr;
 	m_PauseMenuButtons.fill(nullptr);
@@ -64,6 +72,9 @@ void PauseMenuGUI::Create(AllegroScreen* guiScreen, GUIInputWrapper* guiInput) {
 	m_PauseMenuButtons[PauseMenuButton::SettingsButton] = dynamic_cast<GUIButton*>(m_GUIControlManager->GetControl("ButtonSettings"));
 	m_PauseMenuButtons[PauseMenuButton::ModManagerButton] = dynamic_cast<GUIButton*>(m_GUIControlManager->GetControl("ButtonModManager"));
 	m_PauseMenuButtons[PauseMenuButton::ResumeButton] = dynamic_cast<GUIButton*>(m_GUIControlManager->GetControl("ButtonResume"));
+#ifdef __EMSCRIPTEN__
+	m_PauseMenuButtons[PauseMenuButton::RestartButton] = dynamic_cast<GUIButton*>(m_GUIControlManager->GetControl("ButtonRestart"));
+#endif
 
 	for (size_t pauseMenuButton = 0; pauseMenuButton < m_PauseMenuButtons.size(); ++pauseMenuButton) {
 		std::string buttonText = m_PauseMenuButtons[pauseMenuButton]->GetText();
@@ -76,6 +87,10 @@ void PauseMenuGUI::Create(AllegroScreen* guiScreen, GUIInputWrapper* guiInput) {
 		m_PauseMenuButtons[pauseMenuButton]->SetText(m_ButtonUnhoveredText[pauseMenuButton]);
 		m_PauseMenuButtons[pauseMenuButton]->CenterInParent(true, false);
 	}
+#ifdef __EMSCRIPTEN__
+	const GUIButton* resumeButton = m_PauseMenuButtons[PauseMenuButton::ResumeButton];
+	m_ButtonsCentreY = m_PauseMenuBox->GetRelYPos() + (resumeButton->GetRelYPos() + resumeButton->GetHeight()) / 2;
+#endif
 
 	if (m_BackdropBitmap) {
 		destroy_bitmap(m_BackdropBitmap);
@@ -91,6 +106,10 @@ void PauseMenuGUI::Create(AllegroScreen* guiScreen, GUIInputWrapper* guiInput) {
 }
 
 void PauseMenuGUI::SetBackButtonTargetName(const std::string& menuName) {
+#ifdef __EMSCRIPTEN__
+	m_BackButtonTargetName = menuName;
+	SetButtonText(PauseMenuButton::BackToMainButton, "Back to " + menuName + " Menu");
+#else
 	std::string newButtonText = "Back to " + menuName + " Menu";
 
 	std::transform(newButtonText.begin(), newButtonText.end(), newButtonText.begin(), ::toupper);
@@ -103,7 +122,42 @@ void PauseMenuGUI::SetBackButtonTargetName(const std::string& menuName) {
 	m_PauseMenuButtons[PauseMenuButton::BackToMainButton]->SetSize(newButtonWidth, m_PauseMenuButtons[PauseMenuButton::BackToMainButton]->GetHeight());
 	m_PauseMenuButtons[PauseMenuButton::BackToMainButton]->SetText(m_ButtonUnhoveredText[PauseMenuButton::BackToMainButton]);
 	m_PauseMenuButtons[PauseMenuButton::BackToMainButton]->CenterInParent(true, false);
+#endif
 }
+
+#ifdef __EMSCRIPTEN__
+void PauseMenuGUI::SetButtonText(PauseMenuButton button, std::string text) {
+	std::transform(text.begin(), text.end(), text.begin(), ::toupper);
+	m_ButtonHoveredText[button] = text;
+	std::transform(text.begin(), text.end(), text.begin(), ::tolower);
+	m_ButtonUnhoveredText[button] = text;
+
+	GUIButton* control = m_PauseMenuButtons[button];
+	control->SetSize(m_GUIControlManager->GetSkin()->GetFont("FontMainMenu.png")->CalculateWidth(text) + 50, control->GetHeight());
+	control->SetText(m_ButtonUnhoveredText[button]);
+	control->CenterInParent(true, false);
+}
+
+void PauseMenuGUI::LayOutButtons(const std::vector<PauseMenuButton>& rows) {
+	for (GUIButton* button: m_PauseMenuButtons) {
+		button->SetVisible(false);
+		button->SetEnabled(false);
+	}
+	const int rowHeight = m_PauseMenuButtons[PauseMenuButton::ResumeButton]->GetHeight();
+	int columnHeight = 0;
+	for (PauseMenuButton row: rows) {
+		if (row != PauseMenuButton::ButtonCount) {
+			GUIButton* button = m_PauseMenuButtons[row];
+			button->SetVisible(true);
+			button->SetEnabled(true);
+			button->SetPositionRel(button->GetRelXPos(), columnHeight);
+		}
+		columnHeight += rowHeight;
+	}
+	// Moving the box moves its buttons.
+	m_PauseMenuBox->SetPositionRel(m_PauseMenuBox->GetRelXPos(), m_ButtonsCentreY - columnHeight / 2);
+}
+#endif
 
 void PauseMenuGUI::EnableOrDisablePauseMenuFeatures() {
 	bool disableModManager = true;
@@ -112,6 +166,38 @@ void PauseMenuGUI::EnableOrDisablePauseMenuFeatures() {
 		disableModManager = activity->GetClassName() != "GAScripted";
 	}
 
+#ifdef __EMSCRIPTEN__
+	// The port lays the buttons out for three menus (specs/pause-menu.md): a lost
+	// scenario's, with Restart Scenario, then Load Game and Exit to Menu; a scenario's,
+	// with Restart Scenario above the rest; and upstream's, in Conquest and the editors
+	// (whose Activity is named "None", as MenuMan tells them apart).
+	const Activity* activity = g_ActivityMan.GetActivity();
+	const bool scenario = activity && !g_MetaMan.GameInProgress() && activity->GetPresetName() != "None";
+	m_ScenarioLostLayout = g_ActivityMan.ScenarioLost();
+	m_ModManagerButtonDisabled = disableModManager;
+
+	const PauseMenuButton gap = PauseMenuButton::ButtonCount;
+	std::vector<PauseMenuButton> rows;
+	if (m_ScenarioLostLayout) {
+		SetButtonText(PauseMenuButton::SaveOrLoadGameButton, "Load Game");
+		SetButtonText(PauseMenuButton::BackToMainButton, "Exit to Menu");
+		rows = {PauseMenuButton::RestartButton, gap, PauseMenuButton::SaveOrLoadGameButton, PauseMenuButton::BackToMainButton};
+	} else {
+		SetButtonText(PauseMenuButton::SaveOrLoadGameButton, "Save or Load Game");
+		SetButtonText(PauseMenuButton::BackToMainButton, "Back to " + m_BackButtonTargetName + " Menu");
+		if (scenario) {
+			rows = {PauseMenuButton::RestartButton, gap, PauseMenuButton::BackToMainButton};
+		} else {
+			rows = {PauseMenuButton::BackToMainButton, gap};
+		}
+		rows.insert(rows.end(), {PauseMenuButton::SaveOrLoadGameButton, PauseMenuButton::SettingsButton});
+		if (!disableModManager) {
+			rows.push_back(PauseMenuButton::ModManagerButton);
+		}
+		rows.insert(rows.end(), {gap, PauseMenuButton::ResumeButton});
+	}
+	LayOutButtons(rows);
+#else
 	if (m_ModManagerButtonDisabled != disableModManager) {
 		GUIButton* modManagerButton = m_PauseMenuButtons[PauseMenuButton::ModManagerButton];
 
@@ -125,6 +211,7 @@ void PauseMenuGUI::EnableOrDisablePauseMenuFeatures() {
 
 		m_ModManagerButtonDisabled = disableModManager;
 	}
+#endif
 }
 
 void PauseMenuGUI::SetActiveMenuScreen(PauseMenuScreen screenToShow, bool playButtonPressSound) {
@@ -155,6 +242,14 @@ PauseMenuGUI::PauseMenuUpdateResult PauseMenuGUI::Update() {
 			break;
 		case PauseMenuScreen::SaveOrLoadGameScreen:
 			backToMainScreen = m_SaveLoadMenu->HandleInputEvents(this);
+#ifdef __EMSCRIPTEN__
+			// A lost scenario's menu has no Resume, so a game loaded from it is played at once.
+			if (backToMainScreen && m_ScenarioLostLayout && !g_ActivityMan.ScenarioLost()) {
+				SetActiveMenuScreen(PauseMenuScreen::MainScreen, false);
+				m_UpdateResult = PauseMenuUpdateResult::ActivityResumed;
+				return m_UpdateResult;
+			}
+#endif
 			break;
 		case PauseMenuScreen::SettingsScreen:
 			backToMainScreen = m_SettingsMenu->HandleInputEvents();
@@ -214,6 +309,11 @@ bool PauseMenuGUI::HandleInputEvents() {
 			} else if (guiEvent.GetControl() == m_PauseMenuButtons[PauseMenuButton::BackToMainButton]) {
 				g_GUISound.BackButtonPressSound()->Play();
 				m_UpdateResult = PauseMenuUpdateResult::BackToMain;
+#ifdef __EMSCRIPTEN__
+			} else if (guiEvent.GetControl() == m_PauseMenuButtons[PauseMenuButton::RestartButton]) {
+				g_GUISound.ButtonPressSound()->Play();
+				m_UpdateResult = PauseMenuUpdateResult::ActivityRestarted;
+#endif
 			}
 		}
 		if (guiEvent.GetType() == GUIEvent::Notification && (guiEvent.GetMsg() == GUIButton::Focused && dynamic_cast<GUIButton*>(guiEvent.GetControl()))) {

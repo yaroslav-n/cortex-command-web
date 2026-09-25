@@ -56,6 +56,11 @@ namespace RTE {
 		/// @param isInActivity In game or not.
 		void SetInActivity(bool isInActivity) { m_InActivity = isInActivity; }
 
+#ifdef __EMSCRIPTEN__
+		/// Whether the current Activity is a scenario the human players have lost: a game Activity outside a campaign, over, with no human player on the winning team. Its pause menu offers restarting, loading a game or leaving (specs/pause-menu.md).
+		bool ScenarioLost() const;
+#endif
+
 		/// Gets whether the current Activity needs to be restarted.
 		/// @return Whether the current Activity needs to be restarted.
 		bool ActivitySetToRestart() const { return m_ActivityNeedsRestart; }
