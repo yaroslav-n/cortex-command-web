@@ -506,6 +506,7 @@ namespace RTE {
 			SDL_MouseID id{0};
 			std::array<bool, MouseButtons::MAX_MOUSE_BUTTONS> state{};
 			std::array<bool, MouseButtons::MAX_MOUSE_BUTTONS> change{};
+			bool rightButtonDown{}; //!< Whether the right button itself is down. Left Alt holds the right button too, so its state is the two combined.
 			Vector position{};
 			Vector relativeMotion{};
 			Vector analogAim{};
@@ -541,6 +542,7 @@ namespace RTE {
 		bool m_EnableMultiMouseKeyboard{true}; //!< Allow use of multiple mice and keyboards. (Enables relative mouse mode.)
 		bool m_PlayerMouseKeyboardKnown{false}; //!< Whether all player devices are known when multiple mouse and/or keyboards are requested.
 		bool m_DisableKeyboard; //!< Temporarily disable all keyboard input reading.
+		bool m_LeftAltDown; //!< Whether Left Alt is down, which holds every mouse's right button as the button itself does.
 		bool m_DisableMouseMoving; //!< Temporary disable for positioning the mouse, for when the game window is not in focus.
 
 		/// This is set when focus is switched back to the game window and will cause the m_DisableMouseMoving to switch to false when the mouse button is RELEASED.
@@ -557,6 +559,10 @@ namespace RTE {
 		/// Player 2 will either be in the lower-left corner or the upper-right corner depending on vertical/horizontal splitting.
 		/// @param whichPlayer Which player's screen to constrain the mouse to. Only the player with actual control over the mouse will be affected.
 		void ForceMouseWithinPlayerScreen(bool force, int whichPlayer);
+
+		/// Sets a mouse's right button held while the button itself or Left Alt is down, marking the change when that starts or ends, as a press or release of the button would.
+		/// @param mouse The mouse whose right button to update.
+		void UpdateRightMouseButton(Mouse& mouse) const;
 #pragma endregion
 
 #pragma region Input State Handling

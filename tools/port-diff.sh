@@ -10,9 +10,12 @@ OUT="$ROOT/engine/PORT-CHANGES.patch"
 : > "$OUT"
 cd "$(dirname "$ORIGINAL")"
 REF=$(basename "$ORIGINAL")
-# Of the game's data, the port changes only shaders, GUI layouts and the Generic Actor
-# Spawner, which it keeps out of the editors' object list.
+# Of the game's data, the port changes only shaders, GUI layouts and skins (the
+# factions' buy menu skins among them), and the Generic Actor Spawner, which it keeps
+# out of the editors' object list.
 for part in Source Resources external meson.build meson_options.txt Data/Base.rte/Shaders Data/Base.rte/GUIs \
+    Data/Browncoats.rte/GUIs Data/Dummy.rte/GUIs Data/Imperatus.rte/GUIs Data/Ronin.rte/GUIs \
+    Data/Techion.rte/GUIs Data/Uzira.rte/GUIs \
     Data/Base.rte/Scenes/Objects/Bunkers/BunkerSystems/ActorSpawner; do
   # diff exits 1 when files differ; that is the expected case here.
   # Framework symlink loops in vendored Xcode projects make diff complain; noise.

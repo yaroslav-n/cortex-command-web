@@ -13,7 +13,7 @@ node tools/run-checks.mjs           # --list, --only a,b, --angle metal, --chrom
 
 `run-checks.mjs` serves `dist/` itself with the cross-origin isolation headers,
 starts its own headless Chrome with a fresh temporary profile at a fixed
-1280×720 window, and runs thirty-nine checks in about two and a half minutes on a
+1280×720 window, and runs forty checks in about two and a half minutes on a
 12-CPU Mac (about 30 s of it the two sound download checks that go through a bad
 network, and a little over a minute the checks that break the game's own download):
 
@@ -22,7 +22,9 @@ network, and a little over a minute the checks that break the game's own downloa
   status (0 passes; non-zero, an abort or an uncaught error fails) into
   `window.checkResult`. `audio-check` needs a click, which the runner makes;
   `worklet-probe.html?auto` starts the raw device and `ma_engine` itself and checks
-  the sine's peak (0.25) and that the graph advances;
+  the sine's peak (0.25) and that the graph advances; `relative-mouse-check` keeps
+  SDL's relative mode (the game's aiming) through a pointer lock lost to another tab
+  or app (see [input](input.md));
 - **golden outputs** — `random_contract` and `float_contract` run under Node and
   must print exactly `tests/golden/`. The random contract's golden is also what the
   original's own generator (libstdc++, built with g++-13) prints;

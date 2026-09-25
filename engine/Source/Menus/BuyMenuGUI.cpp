@@ -80,8 +80,9 @@ void BuyMenuGUI::Clear() {
 	m_ForeignCostMult = 4.0;
 	int moduleCount = g_PresetMan.GetTotalModuleCount();
 	m_aExpandedModules = new bool[moduleCount];
+	// Every module's section starts open.
 	for (int i = 0; i < moduleCount; ++i)
-		m_aExpandedModules[i] = i == 0 ? true : false;
+		m_aExpandedModules[i] = true;
 	m_pShopList = 0;
 	m_pCartList = 0;
 	m_pCraftBox = 0;
@@ -2047,6 +2048,7 @@ void BuyMenuGUI::CategoryChange(bool focusOnCategoryTabs) {
 					std::string name = pModule->GetFriendlyName();
 					transform(name.begin(), name.end(), name.begin(), ::toupper);
 					m_pShopList->AddItem(name, m_aExpandedModules[moduleID] ? "-" : "+", pItemBitmap, 0, moduleID);
+					m_pShopList->GetItemList()->back()->m_IsHeader = true;
 				}
 
 				// If the module is expanded, add all the items within it below

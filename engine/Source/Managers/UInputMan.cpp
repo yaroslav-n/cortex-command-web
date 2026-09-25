@@ -41,6 +41,7 @@ void UInputMan::Clear() {
 	m_MouseTrapRadius = 350;
 	m_LastDeviceWhichControlledGUICursor = InputDevice::DEVICE_KEYB_ONLY;
 	m_DisableKeyboard = false;
+	m_LeftAltDown = false;
 	m_DisableMouseMoving = false;
 	m_PrepareToEnableMouseMoving = false;
 
@@ -303,7 +304,16 @@ void UInputMan::DisableMouseMoving(bool disable) {
 		m_PrepareToEnableMouseMoving = false;
 	} else {
 		SDL_SetWindowRelativeMouseMode(g_WindowMan.GetWindow(), static_cast<bool>(m_TrapMousePos));
+#ifdef __EMSCRIPTEN__
+		// Motion is taken again at once. Natively it waits until the pointer is back inside the window, so that a click on the title bar
+		// does not drag the window about; a page has no title bar and cannot move the pointer. And the wait could last forever: motion is
+		// ignored while it lasts, and in play the pointer is locked and moved relatively, so the position it waits on can be anywhere,
+		// outside the window too, where it stays. Coming back from another tab or app then left the aim frozen while clicks still worked.
+		m_DisableMouseMoving = false;
+		m_PrepareToEnableMouseMoving = false;
+#else
 		m_PrepareToEnableMouseMoving = true;
+#endif
 	}
 }
 bool UInputMan::CheckMultiMouseKeyboardEnabled(std::optional<std::reference_wrapper<const std::vector<int>>> players) {
@@ -445,6 +455,14 @@ void UInputMan::ClearMouseButtons() {
 	for (auto& [mouseID, mouse]: m_MouseStates) {
 		mouse.state.fill(false);
 		mouse.change.fill(false);
+	}
+}
+
+void UInputMan::UpdateRightMouseButton(Mouse& mouse) const {
+	const bool held = mouse.rightButtonDown || m_LeftAltDown;
+	if (held != mouse.state[MouseButtons::MOUSE_RIGHT]) {
+		mouse.state[MouseButtons::MOUSE_RIGHT] = held;
+		mouse.change[MouseButtons::MOUSE_RIGHT] = true;
 	}
 }
 
@@ -857,6 +875,15 @@ void UInputMan::HandleInputEvent(const SDL_Event& inputEvent) {
 				m_KeyboardStates[0].keyStates[inputEvent.key.scancode] = inputEvent.key.down;
 			}
 
+			// Left Alt is a second right mouse button: holding it opens the pie menu as holding the button does (specs/controls.md). A held key's
+			// repeats are not presses.
+			if (inputEvent.key.scancode == SDL_SCANCODE_LALT && !inputEvent.key.repeat) {
+				m_LeftAltDown = inputEvent.key.down;
+				for (auto& [mouseID, mouse]: m_MouseStates) {
+					UpdateRightMouseButton(mouse);
+				}
+			}
+
 			break;
 		}
 		case SDL_EVENT_KEYBOARD_REMOVED: {
@@ -946,6 +973,16 @@ void UInputMan::HandleInputEvent(const SDL_Event& inputEvent) {
 			}
 			Mouse& mouse = m_MouseStates[inputEvent.motion.which];
 			mouse.id = inputEvent.button.which;
+			if (inputEvent.button.button == SDL_BUTTON_RIGHT) {
+				// Left Alt holds the right button too.
+				mouse.rightButtonDown = inputEvent.button.down;
+				UpdateRightMouseButton(mouse);
+				if (inputEvent.button.which != 0) {
+					m_MouseStates[0].rightButtonDown = inputEvent.button.down;
+					UpdateRightMouseButton(m_MouseStates[0]);
+				}
+				break;
+			}
 			mouse.change[inputEvent.button.button] = inputEvent.button.down != mouse.state[inputEvent.button.button];
 			mouse.state[inputEvent.button.button] = inputEvent.button.down;
 			if (inputEvent.button.which != 0) {

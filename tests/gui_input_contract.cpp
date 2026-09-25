@@ -49,7 +49,20 @@ int main(int, char**) {
  check(manager.GetTextInput()==utf8,"UTF-8 bytes pass, as in the original on Apple arm64");
  text.text.text="";manager.HandleInputEvent(text);check(manager.GetTextInput()==utf8,"empty text event leaves pending input intact");
  manager.EndFrame();
- std::puts("GUI input contract passed: Return and keypad Enter share one GUI key; text input matches the original (32 bytes per event, UTF-8 kept) and expires per frame.");
+ // Back from another tab or app, the page takes the pointer's motion again at once, wherever the last position
+ // it knew was: in play the pointer is locked and moved relatively, so that position can be outside the window.
+ // Mouse 1 is SDL's for the browser's mouse (a motion from mouse 0 counts twice in the combined mouse, as upstream's does).
+ SDL_Event motion{};motion.type=SDL_EVENT_MOUSE_MOTION;motion.motion.which=1;motion.motion.x=-128;motion.motion.y=50;motion.motion.xrel=-4;
+ manager.HandleInputEvent(motion);manager.EndFrame();
+ manager.DisableMouseMoving(true);
+ motion.motion.xrel=6;manager.HandleInputEvent(motion);
+ check(manager.GetMouseMovement(-1).m_X==0,"motion is ignored while the page has lost the focus");
+ manager.EndFrame();
+ manager.DisableMouseMoving(false);
+ motion.motion.xrel=8;manager.HandleInputEvent(motion);
+ check(manager.GetMouseMovement(-1).m_X==8,"motion is taken again as soon as the page has the focus back, the last position outside the window");
+ manager.EndFrame();
+ std::puts("GUI input contract passed: Return and keypad Enter share one GUI key; text input matches the original (32 bytes per event, UTF-8 kept) and expires per frame; mouse motion is taken again when the page gets the focus back.");
  return 0;
  } catch (const std::exception& error) { std::fprintf(stderr,"GUI input contract exception: %s\n",error.what()); return 1; }
 }

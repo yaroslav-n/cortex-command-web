@@ -53,6 +53,7 @@ const CHECKS = [
   { name: 'gui-input', page: 'gui-input-check.html' },
   { name: 'thread-wait', page: 'thread-wait-check.html' },
   { name: 'frame-readback', page: 'frame-readback-check.html' },
+  { name: 'relative-mouse', page: 'relative-mouse-check.html' },
   { name: 'texture-tile', page: 'texture-tile-check.html' },
   { name: 'texture-gpu', page: 'texture-gpu-check.html' },
   { name: 'storage-race', page: 'storage-race-check.html' },

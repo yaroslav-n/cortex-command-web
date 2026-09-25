@@ -282,6 +282,13 @@ target_link_options(frame_readback_contract PRIVATE -sMIN_WEBGL_VERSION=2 -sMAX_
 set_target_properties(frame_readback_contract PROPERTIES SUFFIX ".js")
 configure_file(tests/frame-readback-check.html "${CORTEX_DIST_DIR}/frame-readback-check.html" COPYONLY)
 
+# SDL's browser backend keeps relative mode (the game's aiming) through a lost pointer lock.
+add_executable(relative_mouse_contract EXCLUDE_FROM_ALL tests/relative_mouse_contract.cpp)
+target_link_libraries(relative_mouse_contract PRIVATE SDL3::SDL3-static)
+target_link_options(relative_mouse_contract PRIVATE -sEXIT_RUNTIME=1)
+set_target_properties(relative_mouse_contract PROPERTIES SUFFIX ".js")
+configure_file(tests/relative-mouse-check.html "${CORTEX_DIST_DIR}/relative-mouse-check.html" COPYONLY)
+
 add_executable(texture_tile_contract tests/texture_tile_contract.cpp)
 target_include_directories(texture_tile_contract PRIVATE "${ENGINE}/Source/Renderer")
 target_link_options(texture_tile_contract PRIVATE -sEXIT_RUNTIME=1)
@@ -342,4 +349,4 @@ configure_file(tests/browser-input-queue-check.html "${CORTEX_DIST_DIR}/browser-
 configure_file(tests/check-report.js "${CORTEX_DIST_DIR}/check-report.js" COPYONLY)
 add_custom_target(checks DEPENDS cortex runtime_check audio_check audio_contract worklet_probe
   gui_input_contract thread_wait frame_readback_contract texture_tile_contract texture_gpu_contract
-  storage_runtime random_contract float_contract browser_input_queue_contract)
+  storage_runtime random_contract float_contract browser_input_queue_contract relative_mouse_contract)
