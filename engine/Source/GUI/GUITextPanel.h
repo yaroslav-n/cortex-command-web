@@ -131,6 +131,7 @@ namespace RTE {
 		// The distance from the side and top of the text box, to the side and top of the first line of text
 		int m_WidthMargin;
 		int m_HeightMargin;
+		bool m_CentredVertically; //!< Whether the line is centred in the panel's height instead of HeightMargin from its top (the skin's VAlignment = middle).
 
 		// Cursor
 		int m_CursorX;
