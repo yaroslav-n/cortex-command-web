@@ -754,7 +754,9 @@ async function runGame(connection, base, check, traffic) {
     const interfered = await check.whileLoading?.(tab, traffic.requests);
     if (interfered) return { status: 'fail', detail: interfered, lines: tab.lines };
     const reached = await waitFor(tab, `['running', 'failed'].includes(${state}) && ${state}`, 240000);
-    const reason = reached === 'failed' ? (await tab.evaluate("document.getElementById('errors').textContent")).split('\n').pop() : '';
+    // The reason is the report's last line, but for the heap's size the page ends it with.
+    const report = reached === 'failed' ? (await tab.evaluate("document.getElementById('errors').textContent")).split('\n') : [];
+    const reason = report.filter((line) => !/^Heap: \d+ MB of \d+ MB$/.test(line)).pop() || '';
     if (check.fails) {
       if (reached !== 'failed') return { status: 'fail', detail: reached ? 'the game started' : 'the page never gave up', lines: tab.lines };
       if (!check.fails.test(reason)) return { status: 'fail', detail: `the page says "${reason}"`, lines: tab.lines };
