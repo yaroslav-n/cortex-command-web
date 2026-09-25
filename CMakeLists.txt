@@ -108,7 +108,7 @@ target_link_options(cortex PRIVATE
   -sINITIAL_MEMORY=536870912 -sMAXIMUM_MEMORY=4294967296
   -sFORCE_FILESYSTEM=1 -lidbfs.js
   "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/persistence-journal.js" "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/filesystem.js"
-  "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/sound-files.js"
+  "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/sound-files.js" "--pre-js=${CMAKE_CURRENT_SOURCE_DIR}/runtime/thread-errors.js"
   "--preload-file=${ENGINE}/Data@/Data"
   "--exclude-file=*.flac" "--exclude-file=*.ogg" "--exclude-file=*.wav" "--exclude-file=*.mp3"
   # A returning player's browser keeps the package in IndexedDB and uses it while its
@@ -118,7 +118,8 @@ set_target_properties(cortex PROPERTIES SUFFIX ".js")
 # The linker copies these into cortex.js; an edit to one must relink the game.
 set_property(TARGET cortex APPEND PROPERTY LINK_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/runtime/persistence-journal.js" "${CMAKE_CURRENT_SOURCE_DIR}/runtime/filesystem.js"
-  "${CMAKE_CURRENT_SOURCE_DIR}/runtime/sound-files.js" "${CMAKE_CURRENT_SOURCE_DIR}/runtime/engine-in-worker.js")
+  "${CMAKE_CURRENT_SOURCE_DIR}/runtime/sound-files.js" "${CMAKE_CURRENT_SOURCE_DIR}/runtime/engine-in-worker.js"
+  "${CMAKE_CURRENT_SOURCE_DIR}/runtime/thread-errors.js")
 # The page that loads the game. dist/ is build output; its sources live in site/.
 configure_file(site/index.html "${CORTEX_DIST_DIR}/index.html" COPYONLY)
 
@@ -170,6 +171,12 @@ configure_file(tests/audio-check.html "${CORTEX_DIST_DIR}/audio-check.html" COPY
 
 target_link_options(cortex PRIVATE -Wl,--error-limit=0 "-sEXPORTED_RUNTIME_METHODS=['callMain']"
   ${CORTEX_AUDIO_LINK_OPTIONS})
+if(CORTEX_JSPI)
+  # A C++ exception nothing catches reaches the page as a bare WebAssembly.Exception,
+  # "[object WebAssembly.Exception]". With stack traces every throw carries its type,
+  # its what() and the stack it was thrown from, which the page shows.
+  target_link_options(cortex PRIVATE -sEXCEPTION_STACK_TRACES=1)
+endif()
 
 # The sounds, 85% of the game's data, are not in its data package: the page fetches
 # them after the game starts (runtime/sound-files.js), so Play is ready once the rest

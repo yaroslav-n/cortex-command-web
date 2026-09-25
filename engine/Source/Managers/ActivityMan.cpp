@@ -526,6 +526,21 @@ int ActivityMan::StartActivity(const std::string& className, const std::string& 
 	}
 }
 
+#ifdef __EMSCRIPTEN__
+bool ActivityMan::ScenarioLost() const {
+	const GameActivity* activity = dynamic_cast<const GameActivity*>(m_Activity.get());
+	if (!activity || !activity->IsOver() || g_MetaMan.GameInProgress()) {
+		return false;
+	}
+	for (int player = Players::PlayerOne; player < Players::MaxPlayerCount; ++player) {
+		if (activity->PlayerActive(player) && activity->PlayerHuman(player) && activity->GetTeamOfPlayer(player) == activity->GetWinnerTeam()) {
+			return false;
+		}
+	}
+	return true;
+}
+#endif
+
 void ActivityMan::PauseActivity(bool pause, bool skipPauseMenu) {
 	if (!m_Activity) {
 		g_ConsoleMan.PrintString("ERROR: No Activity to pause!");

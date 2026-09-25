@@ -25,22 +25,29 @@ starts its own headless Chrome with a fresh temporary profile at a fixed
   must print exactly `tests/golden/`. The random contract's golden is also what the
   original's own generator (libstdc++, built with g++-13) prints;
 - **the game** — its start screen fetches none of it until asked and offers "Play
-  Game", and shows the strip under the game, two links with GitHub icons and the
-  Ctrl+F note, with the game's area 50 px shorter than the window; Ctrl+F, sent as
-  key events, must then put the game's area in fullscreen (`start-screen`); a
-  browser without JSPI is told so and fetches nothing (`start-screen-no-jspi`); it
-  boots to the main menu, every sound file it fetches after the start arrives
-  (`sound-files`), and the serial simulation harness reproduces its recorded result
-  lines, state hash, object count and random stream. Those depend on the window
-  size, hence the fixed window, and on the CPU count: the engine makes one Lua state
-  per logical CPU, as the original does, and seeds each from the random stream. The
-  results were recorded on a 12-CPU Mac, so the runner tells every page it has 12
-  (`Emulation.setHardwareConcurrencyOverride`); CI's 4-CPU machine otherwise drew 15
-  fewer numbers at startup. The worker build's engine thread reads its worker's own
-  count, which the override does not reach, so `--dist dist-worker` matches on a
-  12-CPU machine only.
+  Game", and shows the strip under the game (the credit and its two GitHub links,
+  the bug link and the Ctrl+F note), with the game's area 50 px shorter than the
+  window; Ctrl+F, sent as key events, must then put the game's area in fullscreen
+  (`start-screen`); a browser without JSPI is told so and fetches nothing
+  (`start-screen-no-jspi`); it boots to the main menu, every sound file it fetches
+  after the start arrives (`sound-files`), and the serial simulation harness
+  reproduces its recorded result lines, state hash, object count and random stream.
+  Those depend on the window size, hence the fixed window, and on the CPU count: the
+  engine makes one Lua state per logical CPU, as the original does, and seeds each
+  from the random stream. The results were recorded on a 12-CPU Mac, so the runner
+  tells every page it has 12 (`Emulation.setHardwareConcurrencyOverride`); CI's
+  4-CPU machine otherwise drew 15 fewer numbers at startup. The worker build's
+  engine thread reads its worker's own count, which the override does not reach, so
+  `--dist dist-worker` matches on a 12-CPU machine only.
 
 It exits non-zero if anything fails, printing the failing check's last log lines.
+When the game itself fails, the page shows why under "The game stopped with an
+error.": its last output and, for a C++ exception nothing caught, the exception's
+type, `what()` and the stack it was thrown from (the game is linked with
+`EXCEPTION_STACK_TRACES`); before, it said only `[object WebAssembly.Exception]`. A
+JavaScript error that kills a worker thread, such as a stack overflow, arrives as
+"Worker error:" with the worker's own stack (`runtime/thread-errors.js`); before,
+only Emscripten's one line, "worker sent an error!", without it.
 `--log` prints every check's output, each line stamped with the seconds since the
 page (for the game, since Play) started; test pages write their output to the
 console for this. The game checks press the start screen's Play Game as a player

@@ -1,6 +1,6 @@
 diff -ruP --exclude=*.o original/Source/Activities/BaseEditor.cpp port/Source/Activities/BaseEditor.cpp
 --- original/Source/Activities/BaseEditor.cpp	2026-09-24 10:48:58
-+++ port/Source/Activities/BaseEditor.cpp	2026-09-24 19:01:52
++++ port/Source/Activities/BaseEditor.cpp	2026-09-24 23:44:52
 @@ -14,6 +14,7 @@
  // #include "AtomGroup.h"
  #include "Actor.h"
@@ -63,7 +63,19 @@ diff -ruP --exclude=*.o original/Source/Activities/BaseEditor.cpp port/Source/Ac
  	// Get any mode change commands that the user gave the Editor GUI
  	// Done with editing for now; save and return to campaign screen
  	if (m_pEditorGUI->GetActivatedPieSlice() == PieSliceType::EditorDone) {
-@@ -238,6 +258,80 @@
+@@ -225,8 +245,9 @@
+ 		if (m_NeedSave)
+ 			SaveScene(g_SceneMan.GetScene()->GetPresetName());
+ 
+-		// Quit to metagame view
+-		g_ActivityMan.PauseActivity();
++		// Quit to metagame view. Upstream pauses into the pause menu here, whose Resume
++		// returns to this editor, made INACTIVE just above, where no click works any more.
++		g_ActivityMan.PauseActivity(true, true);
+ 	}
+ }
+ 
+@@ -238,6 +259,80 @@
  
  void BaseEditor::Draw(BITMAP* pTargetBitmap, const Vector& targetPos) {
  	Activity::Draw(pTargetBitmap, targetPos);
@@ -1740,7 +1752,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  }
 diff -ruP --exclude=*.o original/Source/Managers/ActivityMan.cpp port/Source/Managers/ActivityMan.cpp
 --- original/Source/Managers/ActivityMan.cpp	2026-09-24 10:48:58
-+++ port/Source/Managers/ActivityMan.cpp	2026-09-24 15:11:17
++++ port/Source/Managers/ActivityMan.cpp	2026-09-25 00:47:48
 @@ -1,3 +1,4 @@
 +#include "ParallelAlgorithms.h"
  #include "ActivityMan.h"
@@ -1756,7 +1768,7 @@ diff -ruP --exclude=*.o original/Source/Managers/ActivityMan.cpp port/Source/Man
  		              [&](const SceneLayerInfo& layerInfo) {
  			              // Save png into a memory buffer
  			              SDL_IOStream* stream = SDL_IOFromDynamicMem();
-@@ -459,12 +459,22 @@
+@@ -459,6 +459,9 @@
  
  int ActivityMan::StartActivity(Activity* activity) {
  	RTEAssert(activity, "Trying to start a null activity!");
@@ -1766,19 +1778,57 @@ diff -ruP --exclude=*.o original/Source/Managers/ActivityMan.cpp port/Source/Man
  
  	g_ThreadMan.GetPriorityThreadPool().wait_for_tasks();
  	g_ThreadMan.GetBackgroundThreadPool().wait_for_tasks();
- 
+@@ -466,6 +469,13 @@
  	m_StartActivity.reset(activity);
  	m_Activity.reset(dynamic_cast<Activity*>(m_StartActivity->Clone()));
-+
+ 
 +#ifdef __EMSCRIPTEN__
 +	// A window resize held back during the previous Activity applies here: the old
 +	// Activity is gone, and nothing of the new one is sized to the screen yet. The
 +	// menu loop alone would never get the chance if one Activity follows another.
 +	g_WindowMan.ApplyPendingWindowResolution();
 +#endif
- 
++
  	g_MusicMan.ResetMusicState();
  
+ 	m_Activity->SetupPlayers();
+@@ -515,6 +525,21 @@
+ 		return -1;
+ 	}
+ }
++
++#ifdef __EMSCRIPTEN__
++bool ActivityMan::ScenarioLost() const {
++	const GameActivity* activity = dynamic_cast<const GameActivity*>(m_Activity.get());
++	if (!activity || !activity->IsOver() || g_MetaMan.GameInProgress()) {
++		return false;
++	}
++	for (int player = Players::PlayerOne; player < Players::MaxPlayerCount; ++player) {
++		if (activity->PlayerActive(player) && activity->PlayerHuman(player) && activity->GetTeamOfPlayer(player) == activity->GetWinnerTeam()) {
++			return false;
++		}
++	}
++	return true;
++}
++#endif
+ 
+ void ActivityMan::PauseActivity(bool pause, bool skipPauseMenu) {
+ 	if (!m_Activity) {
+diff -ruP --exclude=*.o original/Source/Managers/ActivityMan.h port/Source/Managers/ActivityMan.h
+--- original/Source/Managers/ActivityMan.h	2026-09-24 10:48:58
++++ port/Source/Managers/ActivityMan.h	2026-09-25 00:47:48
+@@ -56,6 +56,11 @@
+ 		/// @param isInActivity In game or not.
+ 		void SetInActivity(bool isInActivity) { m_InActivity = isInActivity; }
+ 
++#ifdef __EMSCRIPTEN__
++		/// Whether the current Activity is a scenario the human players have lost: a game Activity outside a campaign, over, with no human player on the winning team. Its pause menu offers restarting, loading a game or leaving (specs/pause-menu.md).
++		bool ScenarioLost() const;
++#endif
++
+ 		/// Gets whether the current Activity needs to be restarted.
+ 		/// @return Whether the current Activity needs to be restarted.
+ 		bool ActivitySetToRestart() const { return m_ActivityNeedsRestart; }
 diff -ruP --exclude=*.o original/Source/Managers/AudioMan.cpp port/Source/Managers/AudioMan.cpp
 --- original/Source/Managers/AudioMan.cpp	2026-09-24 10:48:58
 +++ port/Source/Managers/AudioMan.cpp	2026-09-24 17:52:38
@@ -2694,6 +2744,96 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.h port/Source/Managers/L
  
  		lua_State* m_State;
  		Entity* m_TempEntity; //!< Temporary holder for an Entity object that we want to pass into the Lua state without fuss. Lets you export objects to lua easily.
+diff -ruP --exclude=*.o original/Source/Managers/MenuMan.cpp port/Source/Managers/MenuMan.cpp
+--- original/Source/Managers/MenuMan.cpp	2026-09-24 10:48:59
++++ port/Source/Managers/MenuMan.cpp	2026-09-25 00:56:16
+@@ -5,6 +5,9 @@
+ #include "UInputMan.h"
+ #include "PresetMan.h"
+ #include "MetaMan.h"
++#ifdef __EMSCRIPTEN__
++#include "AudioMan.h"
++#endif
+ 
+ #include "GUI.h"
+ #include "AllegroScreen.h"
+@@ -87,7 +90,9 @@
+ 				g_MetaMan.GetGUI()->SetEnabled();
+ 				break;
+ 			case ActiveMenu::PauseMenuActive:
++#ifndef __EMSCRIPTEN__
+ 				m_PauseMenu->EnableOrDisablePauseMenuFeatures();
++#endif
+ 				if (g_MetaMan.GameInProgress()) {
+ 					m_PauseMenu->SetBackButtonTargetName("Conquest");
+ 				} else {
+@@ -97,6 +102,10 @@
+ 						m_PauseMenu->SetBackButtonTargetName("Scenario");
+ 					}
+ 				}
++#ifdef __EMSCRIPTEN__
++				// After the back button's name: the layout uses it, or replaces it in a lost scenario's menu.
++				m_PauseMenu->EnableOrDisablePauseMenuFeatures();
++#endif
+ 				break;
+ 			default:
+ 				break;
+@@ -105,6 +114,12 @@
+ }
+ 
+ void MenuMan::HandleTransitionIntoMenuLoop() {
++#ifdef __EMSCRIPTEN__
++	// SetActiveMenu sets a menu up when it becomes active. Resume leaves the loop at once,
++	// so the pause menu stayed "active" and was not set up again at the next pause, which
++	// showed a scenario's buttons after it was lost.
++	m_ActiveMenu = ActiveMenu::MenusDisabled;
++#endif
+ 	if (g_MetaMan.GameInProgress()) {
+ 		if (g_ActivityMan.SkipPauseMenuWhenPausingActivity()) {
+ 			m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::MetaGameFadeIn);
+@@ -117,7 +132,13 @@
+ 				// If we're in the editors or in online multiplayer then return to main menu instead of scenario menu.
+ 				m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::ScrollingFadeIn);
+ 			} else {
+-				if (activity->IsOver() || g_ActivityMan.SkipPauseMenuWhenPausingActivity()) {
++#ifdef __EMSCRIPTEN__
++				// A lost scenario has a pause menu of its own (PauseMenuGUI) instead of the Scenario screen.
++				const bool activityOver = activity->IsOver() && !g_ActivityMan.ScenarioLost();
++#else
++				const bool activityOver = activity->IsOver();
++#endif
++				if (activityOver || g_ActivityMan.SkipPauseMenuWhenPausingActivity()) {
+ 					m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::ScenarioFadeIn);
+ 				} else {
+ 					m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::PauseMenu);
+@@ -237,11 +258,27 @@
+ 	switch (m_PauseMenu->Update()) {
+ 		case PauseMenuGUI::PauseMenuUpdateResult::ActivityResumed:
+ 			m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::TransitionEnd);
++#ifdef __EMSCRIPTEN__
++			// A game loaded from the pause menu is a new Activity, never paused, so the resume
++			// that follows would not clear the pause's music muffling.
++			g_AudioMan.SetMusicMuffledState(false);
++#endif
+ 			g_ActivityMan.SetResumeActivity(true);
+ 			break;
+ 		case PauseMenuGUI::PauseMenuUpdateResult::BackToMain:
+ 			m_TitleScreen->SetTitleTransitionState(g_MetaMan.GameInProgress() ? TitleScreen::TitleTransition::MetaGameFadeIn : TitleScreen::TitleTransition::ScenarioFadeIn);
+ 			break;
++#ifdef __EMSCRIPTEN__
++		case PauseMenuGUI::PauseMenuUpdateResult::ActivityRestarted:
++			// Out of the menu at once, as Resume does; the game loop then restarts the
++			// Activity (ActivityMan::RestartActivity), as the Scenario screen's start does.
++			// The pause muffled the music, and the resume that follows a start finds the
++			// new Activity unpaused, so it would not clear that.
++			m_TitleScreen->SetTitleTransitionState(TitleScreen::TitleTransition::TransitionEnd);
++			g_AudioMan.SetMusicMuffledState(false);
++			g_ActivityMan.SetRestartActivity();
++			break;
++#endif
+ 		default:
+ 			break;
+ 	}
 diff -ruP --exclude=*.o original/Source/Managers/MovableMan.cpp port/Source/Managers/MovableMan.cpp
 --- original/Source/Managers/MovableMan.cpp	2026-09-24 10:48:59
 +++ port/Source/Managers/MovableMan.cpp	2026-09-23 23:53:52
@@ -3131,7 +3271,7 @@ diff -ruP --exclude=*.o original/Source/Managers/SceneMan.cpp port/Source/Manage
  		if (pUnseenLayer && pUnseenLayer->GetBitmap()) {
 diff -ruP --exclude=*.o original/Source/Managers/SettingsMan.cpp port/Source/Managers/SettingsMan.cpp
 --- original/Source/Managers/SettingsMan.cpp	2026-09-24 10:48:59
-+++ port/Source/Managers/SettingsMan.cpp	2026-09-24 21:32:01
++++ port/Source/Managers/SettingsMan.cpp	2026-09-24 23:20:18
 @@ -10,6 +10,11 @@
  #include "UInputMan.h"
  #include "System.h"
@@ -3253,7 +3393,7 @@ diff -ruP --exclude=*.o original/Source/Managers/SettingsMan.cpp port/Source/Man
  	writer.NewPropertyWithValue("UseMultiDisplays", g_WindowMan.m_UseMultiDisplays);
 diff -ruP --exclude=*.o original/Source/Managers/SettingsMan.h port/Source/Managers/SettingsMan.h
 --- original/Source/Managers/SettingsMan.h	2026-09-24 10:48:59
-+++ port/Source/Managers/SettingsMan.h	2026-09-24 21:31:46
++++ port/Source/Managers/SettingsMan.h	2026-09-24 23:20:18
 @@ -6,6 +6,9 @@
  #include <list>
  #include <cmath>
@@ -3475,7 +3615,7 @@ diff -ruP --exclude=*.o original/Source/Managers/TimerMan.h port/Source/Managers
  		std::chrono::steady_clock::time_point m_StartTime; //!< The point in real time when the simulation (re)started.
 diff -ruP --exclude=*.o original/Source/Managers/UInputMan.cpp port/Source/Managers/UInputMan.cpp
 --- original/Source/Managers/UInputMan.cpp	2026-09-24 10:48:59
-+++ port/Source/Managers/UInputMan.cpp	2026-09-24 09:47:02
++++ port/Source/Managers/UInputMan.cpp	2026-09-25 00:50:13
 @@ -35,7 +35,6 @@
  	m_SkipHandlingSpecialInput = false;
  	m_TextInput.clear();
@@ -3484,11 +3624,10 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.cpp port/Source/Manag
  	m_MouseSensitivity = 0.6F;
  	m_TrapMousePos = false;
  	m_PlayerScreenMouseBounds = {0, 0, 0, 0};
-@@ -911,6 +910,24 @@
- 
+@@ -912,6 +911,24 @@
  			m_MouseStates[0].position = {inputEvent.motion.x, inputEvent.motion.y};
  			m_MouseStates[0].relativeMotion += {inputEvent.motion.xrel, inputEvent.motion.yrel};
-+
+ 
 +#ifdef __EMSCRIPTEN__
 +			// Positions are divided by the scale later, but a letterboxed image also
 +			// starts after its bars. Upstream never subtracted them because it rarely
@@ -3506,9 +3645,25 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.cpp port/Source/Manag
 +				m_MouseStates[0].position = corrected;
 +			}
 +#endif
- 
++
  			if (g_WindowMan.FullyCoversAllDisplays()) {
  				int windowPosX = 0;
+ 				int windowPosY = 0;
+@@ -1071,6 +1088,14 @@
+ 			g_ActivityMan.PauseActivity(true, FlagShiftState());
+ 			return;
+ 		}
++#ifdef __EMSCRIPTEN__
++		// A lost scenario's menu (MenuMan) opens with Space and Enter too. Upstream took Space
++		// only once "Press [SPACE] or [START] to continue!" showed, five seconds after the loss.
++		if (g_ActivityMan.ScenarioLost() && (KeyPressed(SDLK_SPACE) || KeyPressed(SDLK_RETURN) || KeyPressed(SDLK_KP_ENTER))) {
++			g_ActivityMan.PauseActivity();
++			return;
++		}
++#endif
+ 		// Ctrl+R or Back button for controllers to reset activity.
+ 		if (!g_MetaMan.GameInProgress() && !g_ActivityMan.ActivitySetToRestart()) {
+ 			g_ActivityMan.SetRestartActivity((FlagRAltState() && KeyPressed(SDLK_R)) || AnyBackPress());
 diff -ruP --exclude=*.o original/Source/Managers/UInputMan.h port/Source/Managers/UInputMan.h
 --- original/Source/Managers/UInputMan.h	2026-09-24 10:48:59
 +++ port/Source/Managers/UInputMan.h	2026-09-24 04:48:09
@@ -4162,7 +4317,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  }
 diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Managers/WindowMan.h
 --- original/Source/Managers/WindowMan.h	2026-09-24 10:48:59
-+++ port/Source/Managers/WindowMan.h	2026-09-24 21:31:39
++++ port/Source/Managers/WindowMan.h	2026-09-24 23:20:18
 @@ -97,6 +97,17 @@
  		/// @return What multiple the game resolution is currently sized at.
  		float GetResMultiplier() const { return m_ResMultiplier; }
@@ -4303,7 +4458,7 @@ diff -ruP --exclude=*.o original/Source/Menus/MainMenuGUI.cpp port/Source/Menus/
  void MainMenuGUI::CreateMainScreen() {
 diff -ruP --exclude=*.o original/Source/Menus/ModManagerGUI.cpp port/Source/Menus/ModManagerGUI.cpp
 --- original/Source/Menus/ModManagerGUI.cpp	2026-09-24 10:48:59
-+++ port/Source/Menus/ModManagerGUI.cpp	2026-09-24 21:32:23
++++ port/Source/Menus/ModManagerGUI.cpp	2026-09-24 23:20:18
 @@ -328,6 +328,10 @@
  			}
  		}
@@ -4317,9 +4472,249 @@ diff -ruP --exclude=*.o original/Source/Menus/ModManagerGUI.cpp port/Source/Menu
  
 Only in original/Source/Menus: MultiplayerGameGUI.cpp
 Only in original/Source/Menus: MultiplayerGameGUI.h
+diff -ruP --exclude=*.o original/Source/Menus/PauseMenuGUI.cpp port/Source/Menus/PauseMenuGUI.cpp
+--- original/Source/Menus/PauseMenuGUI.cpp	2026-09-24 10:48:59
++++ port/Source/Menus/PauseMenuGUI.cpp	2026-09-25 00:49:46
+@@ -4,6 +4,9 @@
+ #include "FrameMan.h"
+ #include "ConsoleMan.h"
+ #include "ActivityMan.h"
++#ifdef __EMSCRIPTEN__
++#include "MetaMan.h"
++#endif
+ #include "UInputMan.h"
+ #include "SettingsMan.h"
+ 
+@@ -42,6 +45,11 @@
+ 
+ 	m_SavingButtonsDisabled = false;
+ 	m_ModManagerButtonDisabled = false;
++#ifdef __EMSCRIPTEN__
++	m_BackButtonTargetName = "Main";
++	m_ScenarioLostLayout = false;
++	m_ButtonsCentreY = 0;
++#endif
+ 
+ 	m_PauseMenuBox = nullptr;
+ 	m_PauseMenuButtons.fill(nullptr);
+@@ -64,6 +72,9 @@
+ 	m_PauseMenuButtons[PauseMenuButton::SettingsButton] = dynamic_cast<GUIButton*>(m_GUIControlManager->GetControl("ButtonSettings"));
+ 	m_PauseMenuButtons[PauseMenuButton::ModManagerButton] = dynamic_cast<GUIButton*>(m_GUIControlManager->GetControl("ButtonModManager"));
+ 	m_PauseMenuButtons[PauseMenuButton::ResumeButton] = dynamic_cast<GUIButton*>(m_GUIControlManager->GetControl("ButtonResume"));
++#ifdef __EMSCRIPTEN__
++	m_PauseMenuButtons[PauseMenuButton::RestartButton] = dynamic_cast<GUIButton*>(m_GUIControlManager->GetControl("ButtonRestart"));
++#endif
+ 
+ 	for (size_t pauseMenuButton = 0; pauseMenuButton < m_PauseMenuButtons.size(); ++pauseMenuButton) {
+ 		std::string buttonText = m_PauseMenuButtons[pauseMenuButton]->GetText();
+@@ -76,6 +87,10 @@
+ 		m_PauseMenuButtons[pauseMenuButton]->SetText(m_ButtonUnhoveredText[pauseMenuButton]);
+ 		m_PauseMenuButtons[pauseMenuButton]->CenterInParent(true, false);
+ 	}
++#ifdef __EMSCRIPTEN__
++	const GUIButton* resumeButton = m_PauseMenuButtons[PauseMenuButton::ResumeButton];
++	m_ButtonsCentreY = m_PauseMenuBox->GetRelYPos() + (resumeButton->GetRelYPos() + resumeButton->GetHeight()) / 2;
++#endif
+ 
+ 	if (m_BackdropBitmap) {
+ 		destroy_bitmap(m_BackdropBitmap);
+@@ -91,6 +106,10 @@
+ }
+ 
+ void PauseMenuGUI::SetBackButtonTargetName(const std::string& menuName) {
++#ifdef __EMSCRIPTEN__
++	m_BackButtonTargetName = menuName;
++	SetButtonText(PauseMenuButton::BackToMainButton, "Back to " + menuName + " Menu");
++#else
+ 	std::string newButtonText = "Back to " + menuName + " Menu";
+ 
+ 	std::transform(newButtonText.begin(), newButtonText.end(), newButtonText.begin(), ::toupper);
+@@ -103,8 +122,43 @@
+ 	m_PauseMenuButtons[PauseMenuButton::BackToMainButton]->SetSize(newButtonWidth, m_PauseMenuButtons[PauseMenuButton::BackToMainButton]->GetHeight());
+ 	m_PauseMenuButtons[PauseMenuButton::BackToMainButton]->SetText(m_ButtonUnhoveredText[PauseMenuButton::BackToMainButton]);
+ 	m_PauseMenuButtons[PauseMenuButton::BackToMainButton]->CenterInParent(true, false);
++#endif
+ }
+ 
++#ifdef __EMSCRIPTEN__
++void PauseMenuGUI::SetButtonText(PauseMenuButton button, std::string text) {
++	std::transform(text.begin(), text.end(), text.begin(), ::toupper);
++	m_ButtonHoveredText[button] = text;
++	std::transform(text.begin(), text.end(), text.begin(), ::tolower);
++	m_ButtonUnhoveredText[button] = text;
++
++	GUIButton* control = m_PauseMenuButtons[button];
++	control->SetSize(m_GUIControlManager->GetSkin()->GetFont("FontMainMenu.png")->CalculateWidth(text) + 50, control->GetHeight());
++	control->SetText(m_ButtonUnhoveredText[button]);
++	control->CenterInParent(true, false);
++}
++
++void PauseMenuGUI::LayOutButtons(const std::vector<PauseMenuButton>& rows) {
++	for (GUIButton* button: m_PauseMenuButtons) {
++		button->SetVisible(false);
++		button->SetEnabled(false);
++	}
++	const int rowHeight = m_PauseMenuButtons[PauseMenuButton::ResumeButton]->GetHeight();
++	int columnHeight = 0;
++	for (PauseMenuButton row: rows) {
++		if (row != PauseMenuButton::ButtonCount) {
++			GUIButton* button = m_PauseMenuButtons[row];
++			button->SetVisible(true);
++			button->SetEnabled(true);
++			button->SetPositionRel(button->GetRelXPos(), columnHeight);
++		}
++		columnHeight += rowHeight;
++	}
++	// Moving the box moves its buttons.
++	m_PauseMenuBox->SetPositionRel(m_PauseMenuBox->GetRelXPos(), m_ButtonsCentreY - columnHeight / 2);
++}
++#endif
++
+ void PauseMenuGUI::EnableOrDisablePauseMenuFeatures() {
+ 	bool disableModManager = true;
+ 
+@@ -112,6 +166,38 @@
+ 		disableModManager = activity->GetClassName() != "GAScripted";
+ 	}
+ 
++#ifdef __EMSCRIPTEN__
++	// The port lays the buttons out for three menus (specs/pause-menu.md): a lost
++	// scenario's, with Restart Scenario, then Load Game and Exit to Menu; a scenario's,
++	// with Restart Scenario above the rest; and upstream's, in Conquest and the editors
++	// (whose Activity is named "None", as MenuMan tells them apart).
++	const Activity* activity = g_ActivityMan.GetActivity();
++	const bool scenario = activity && !g_MetaMan.GameInProgress() && activity->GetPresetName() != "None";
++	m_ScenarioLostLayout = g_ActivityMan.ScenarioLost();
++	m_ModManagerButtonDisabled = disableModManager;
++
++	const PauseMenuButton gap = PauseMenuButton::ButtonCount;
++	std::vector<PauseMenuButton> rows;
++	if (m_ScenarioLostLayout) {
++		SetButtonText(PauseMenuButton::SaveOrLoadGameButton, "Load Game");
++		SetButtonText(PauseMenuButton::BackToMainButton, "Exit to Menu");
++		rows = {PauseMenuButton::RestartButton, gap, PauseMenuButton::SaveOrLoadGameButton, PauseMenuButton::BackToMainButton};
++	} else {
++		SetButtonText(PauseMenuButton::SaveOrLoadGameButton, "Save or Load Game");
++		SetButtonText(PauseMenuButton::BackToMainButton, "Back to " + m_BackButtonTargetName + " Menu");
++		if (scenario) {
++			rows = {PauseMenuButton::RestartButton, gap, PauseMenuButton::BackToMainButton};
++		} else {
++			rows = {PauseMenuButton::BackToMainButton, gap};
++		}
++		rows.insert(rows.end(), {PauseMenuButton::SaveOrLoadGameButton, PauseMenuButton::SettingsButton});
++		if (!disableModManager) {
++			rows.push_back(PauseMenuButton::ModManagerButton);
++		}
++		rows.insert(rows.end(), {gap, PauseMenuButton::ResumeButton});
++	}
++	LayOutButtons(rows);
++#else
+ 	if (m_ModManagerButtonDisabled != disableModManager) {
+ 		GUIButton* modManagerButton = m_PauseMenuButtons[PauseMenuButton::ModManagerButton];
+ 
+@@ -125,6 +211,7 @@
+ 
+ 		m_ModManagerButtonDisabled = disableModManager;
+ 	}
++#endif
+ }
+ 
+ void PauseMenuGUI::SetActiveMenuScreen(PauseMenuScreen screenToShow, bool playButtonPressSound) {
+@@ -155,6 +242,14 @@
+ 			break;
+ 		case PauseMenuScreen::SaveOrLoadGameScreen:
+ 			backToMainScreen = m_SaveLoadMenu->HandleInputEvents(this);
++#ifdef __EMSCRIPTEN__
++			// A lost scenario's menu has no Resume, so a game loaded from it is played at once.
++			if (backToMainScreen && m_ScenarioLostLayout && !g_ActivityMan.ScenarioLost()) {
++				SetActiveMenuScreen(PauseMenuScreen::MainScreen, false);
++				m_UpdateResult = PauseMenuUpdateResult::ActivityResumed;
++				return m_UpdateResult;
++			}
++#endif
+ 			break;
+ 		case PauseMenuScreen::SettingsScreen:
+ 			backToMainScreen = m_SettingsMenu->HandleInputEvents();
+@@ -214,6 +309,11 @@
+ 			} else if (guiEvent.GetControl() == m_PauseMenuButtons[PauseMenuButton::BackToMainButton]) {
+ 				g_GUISound.BackButtonPressSound()->Play();
+ 				m_UpdateResult = PauseMenuUpdateResult::BackToMain;
++#ifdef __EMSCRIPTEN__
++			} else if (guiEvent.GetControl() == m_PauseMenuButtons[PauseMenuButton::RestartButton]) {
++				g_GUISound.ButtonPressSound()->Play();
++				m_UpdateResult = PauseMenuUpdateResult::ActivityRestarted;
++#endif
+ 			}
+ 		}
+ 		if (guiEvent.GetType() == GUIEvent::Notification && (guiEvent.GetMsg() == GUIButton::Focused && dynamic_cast<GUIButton*>(guiEvent.GetControl()))) {
+diff -ruP --exclude=*.o original/Source/Menus/PauseMenuGUI.h port/Source/Menus/PauseMenuGUI.h
+--- original/Source/Menus/PauseMenuGUI.h	2026-09-24 10:48:59
++++ port/Source/Menus/PauseMenuGUI.h	2026-09-25 00:48:10
+@@ -5,6 +5,9 @@
+ #include <array>
+ #include <memory>
+ #include <string>
++#ifdef __EMSCRIPTEN__
++#include <vector>
++#endif
+ 
+ struct BITMAP;
+ 
+@@ -27,7 +30,10 @@
+ 		enum class PauseMenuUpdateResult {
+ 			NoEvent,
+ 			BackToMain,
+-			ActivityResumed
++			ActivityResumed,
++#ifdef __EMSCRIPTEN__
++			ActivityRestarted
++#endif
+ 		};
+ 
+ #pragma region Creation
+@@ -80,6 +86,9 @@
+ 			SettingsButton,
+ 			ModManagerButton,
+ 			ResumeButton,
++#ifdef __EMSCRIPTEN__
++			RestartButton,
++#endif
+ 			ButtonCount
+ 		};
+ 
+@@ -106,6 +115,11 @@
+ 
+ 		bool m_SavingButtonsDisabled; //!< Whether the save and load buttons are disabled and hidden.
+ 		bool m_ModManagerButtonDisabled; //!< Whether the mod manager button is disabled and hidden.
++#ifdef __EMSCRIPTEN__
++		std::string m_BackButtonTargetName; //!< The menu the back button returns to, as MenuMan last named it.
++		bool m_ScenarioLostLayout; //!< Whether the buttons are those of a lost scenario: Restart Scenario, Load Game and Exit to Menu.
++		int m_ButtonsCentreY; //!< Where upstream's full column of buttons is centred, relative to the root box; every layout is centred there.
++#endif
+ 
+ 		/// GUI elements that compose the pause menu screen.
+ 		GUICollectionBox* m_PauseMenuBox;
+@@ -134,6 +148,17 @@
+ 		/// Animates (blinking) the resume game button.
+ 		void BlinkResumeButton();
+ #pragma endregion
++
++#ifdef __EMSCRIPTEN__
++		/// Shows these buttons, top to bottom, and hides the others. ButtonCount leaves a gap one button high.
++		/// @param rows The buttons, in order.
++		void LayOutButtons(const std::vector<PauseMenuButton>& rows);
++
++		/// Sets a button's text, in the hovered and unhovered case, and fits the button to it.
++		/// @param button The button.
++		/// @param text Its text.
++		void SetButtonText(PauseMenuButton button, std::string text);
++#endif
+ 
+ 		/// Clears all the member variables of this PauseMenuGUI, effectively resetting the members of this object.
+ 		void Clear();
 diff -ruP --exclude=*.o original/Source/Menus/SaveLoadMenuGUI.cpp port/Source/Menus/SaveLoadMenuGUI.cpp
 --- original/Source/Menus/SaveLoadMenuGUI.cpp	2026-09-24 10:48:59
-+++ port/Source/Menus/SaveLoadMenuGUI.cpp	2026-09-20 00:05:12
++++ port/Source/Menus/SaveLoadMenuGUI.cpp	2026-09-25 00:50:13
 @@ -1,3 +1,4 @@
 +#include "ParallelAlgorithms.h"
  #include "SaveLoadMenuGUI.h"
@@ -4347,6 +4742,28 @@ diff -ruP --exclude=*.o original/Source/Menus/SaveLoadMenuGUI.cpp port/Source/Me
  		const auto saveFsTime = std::chrono::clock_cast<std::chrono::system_clock>(save.SaveDate);
  		const auto saveTime = std::chrono::system_clock::to_time_t(saveFsTime);
  #else
+@@ -235,6 +238,10 @@
+ 
+ void SaveLoadMenuGUI::UpdateButtonEnabledStates() {
+ 	bool allowSave = g_ActivityMan.GetActivity() && g_ActivityMan.GetActivity()->GetAllowsUserSaving() && m_SaveGameName->GetText() != "";
++#ifdef __EMSCRIPTEN__
++	// A lost scenario's menu offers loading only.
++	allowSave = allowSave && !g_ActivityMan.ScenarioLost();
++#endif
+ 
+ 	int existingSaveItemIndex = -1;
+ 	for (int i = 0; i < m_SaveGamesListBox->GetItemList()->size(); ++i) {
+@@ -290,6 +297,10 @@
+ 		} else if (!m_SavingBlinkTimer.IsPastRealTimeLimit()) {
+ 			// Show "Saved!" for a little while after saving
+ 			m_DescriptionLabel->SetText("Game saved successfully!");
++#ifdef __EMSCRIPTEN__
++		} else if (g_ActivityMan.ScenarioLost()) {
++			m_DescriptionLabel->SetText("Choose a game to load.");
++#endif
+ 		} else if (!g_ActivityMan.GetActivity()->GetAllowsUserSaving()) {
+ 			m_DescriptionLabel->SetText("The currently played activity does not allow saving.");
+ 		} else if (m_SaveGameName->GetText().empty()) {
 diff -ruP --exclude=*.o original/Source/Menus/SceneEditorGUI.cpp port/Source/Menus/SceneEditorGUI.cpp
 --- original/Source/Menus/SceneEditorGUI.cpp	2026-09-24 10:48:59
 +++ port/Source/Menus/SceneEditorGUI.cpp	2026-09-24 20:18:19
@@ -4776,7 +5193,7 @@ diff -ruP --exclude=*.o original/Source/Menus/SceneEditorGUI.h port/Source/Menus
  	private:
 diff -ruP --exclude=*.o original/Source/Menus/SettingsGUI.cpp port/Source/Menus/SettingsGUI.cpp
 --- original/Source/Menus/SettingsGUI.cpp	2026-09-24 10:48:59
-+++ port/Source/Menus/SettingsGUI.cpp	2026-09-24 21:32:23
++++ port/Source/Menus/SettingsGUI.cpp	2026-09-24 23:20:18
 @@ -1,5 +1,8 @@
  #include "SettingsGUI.h"
  #include "WindowMan.h"
@@ -4799,7 +5216,7 @@ diff -ruP --exclude=*.o original/Source/Menus/SettingsGUI.cpp port/Source/Menus/
  
 diff -ruP --exclude=*.o original/Source/Menus/SettingsVideoGUI.cpp port/Source/Menus/SettingsVideoGUI.cpp
 --- original/Source/Menus/SettingsVideoGUI.cpp	2026-09-24 10:48:59
-+++ port/Source/Menus/SettingsVideoGUI.cpp	2026-09-24 21:42:55
++++ port/Source/Menus/SettingsVideoGUI.cpp	2026-09-24 23:20:18
 @@ -21,9 +21,20 @@
  #endif
  
@@ -7259,3 +7676,26 @@ diff -ruP --exclude=*.o original/Data/Base.rte/Shaders/Dissolve.frag port/Data/B
  	FragColor = color;
  }
 \ No newline at end of file
+diff -ruP --exclude=*.o original/Data/Base.rte/GUIs/PauseMenuGUI.ini port/Data/Base.rte/GUIs/PauseMenuGUI.ini
+--- original/Data/Base.rte/GUIs/PauseMenuGUI.ini	2026-09-24 10:48:57
++++ port/Data/Base.rte/GUIs/PauseMenuGUI.ini	2026-09-25 00:16:12
+@@ -42,6 +42,19 @@
+ Anchor = Left, Top
+ Text = Back to Main Menu
+ 
++[ButtonRestart]
++ControlType = BUTTON
++Parent = PauseScreen
++X = 0
++Y = 20
++Width = 224
++Height = 20
++Visible = False
++Enabled = False
++Name = ButtonRestart
++Anchor = Left, Top
++Text = Restart Scenario
++
+ [ButtonSaveOrLoadGame]
+ ControlType = BUTTON
+ Parent = PauseScreen
