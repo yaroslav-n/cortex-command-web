@@ -42,8 +42,9 @@ build/, dist/        build output (not committed); dist/ is the deployable app
 ../original-code/    the original game, untouched — outside this repository
 ```
 
-The deployable set is `index.html`, `cortex.js`, `cortex.wasm`, `cortex.data` and
-the `audio/` directory (every sound file and `manifest.tsv`, their list), served
+The deployable set is `index.html`, `cortex.js`, `cortex.wasm`, `cortex.data`,
+`cortex.data.json` (the package's size and SHA-256, which the page checks it against)
+and the `audio/` directory (every sound file and `manifest.tsv`, their list), served
 with cross-origin isolation headers; the pthread and AudioWorklet glue are inlined
 in `cortex.js`. Verified by serving only these from an empty directory under
 `/cortex/` on a fresh origin: the main menu, and every sound file arrived. The four
@@ -64,7 +65,7 @@ never been tried. Assume nothing about them.
 | input | an extra event queue that survives render-only frames | [input](input.md) |
 | audio | FMOD API reimplemented over miniaudio on an AudioWorklet thread | [audio](audio.md) |
 | Lua | LuaJIT replaced by Lua 5.1.5 + LuaBitOp | [lua](lua.md) |
-| files | `Data` preloaded without its sounds, which are fetched after the start; saves in IndexedDB via IDBFS with a write journal | [files and saves](files-and-saves.md) |
+| files | `Data` preloaded without its sounds, which are fetched after the start; the page downloads, resumes, checks and keeps the package; saves in IndexedDB via IDBFS with a write journal | [files and saves](files-and-saves.md) |
 | threads | pthreads + JSPI + cooperative yields; the engine on the page's thread, or on a worker in the `--worker` build | [threads](threads.md) |
 | networking | **none — online play is not supported.** The original's RakNet multiplayer (never built by upstream at this commit) and everything the port had added for it were removed on 2026-09-24 | — |
 

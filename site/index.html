@@ -102,6 +102,230 @@ function describeError(error) {
 }
 
 const megabytes = (bytes) => Math.round(bytes / 1e6);
+const loading = () => document.body.dataset.state === 'loading';
+
+// Loading must never stop without saying so. Every step reports news: the program's and
+// the package's downloads every piece that arrives, a download's retries, and Emscripten
+// each step main waits for, as it starts and as it ends, and its setStatus. With none for
+// QUIET_MS the page gives up and says to reload. A download that gets no byte for
+// STALL_MS is tried again, after a pause that doubles up to 8 s, from where it stopped,
+// and given up after TRIES failures in a row, so it gives news more often than that.
+// ?load-timeout=<ms> (tools/run-checks.mjs) sets QUIET_MS and scales the rest with it.
+const QUIET_MS = Number(query.get('load-timeout')) || 30000;
+const STALL_MS = QUIET_MS * 2 / 3;
+const TRIES = 5;
+const retryPause = (failures) => Math.min(2 ** (failures - 1), 8) * QUIET_MS / 30;
+let lastNews = 0;
+const news = () => { lastNews = performance.now(); };
+
+// The data package, cortex.data: all of Data but the sounds (CMakeLists.txt). Emscripten's
+// file packager still makes every one of its files, in its own order, which is the order
+// the engine reads a module's INI files in (DataModule::FindAndRead lists a directory as
+// it is); the page only brings the bytes, through the packager's getPreloadedPackage.
+// cortex.js asks for them as it starts, long before they are here, so it is given the
+// buffer they arrive in: the packager's files are views into it (it owns the buffer), and
+// main waits on a run dependency until every byte is here and checked. The bytes come from
+// Cache Storage, which keeps them under their SHA-256, or are downloaded, resumed where a
+// failure stopped them, and checked against cortex.data.json (their size and SHA-256,
+// written by the build) before anything uses or keeps them. See notes/files-and-saves.md.
+const PACKAGE = 'cortex.data';
+const PACKAGE_CACHE = 'cortex-data';
+let packageBytes = null;
+let packageReady = null; // true once packageBytes hold the package, false if it could not be had
+
+// The buffer is made by whichever asks first: the loader, which has read the package's size
+// from cortex.data.json, or the packager, which knows it from cortex.js. Two sizes mean the
+// two files are from different builds.
+function packageBuffer(size, source) {
+  packageBytes ??= new Uint8Array(size);
+  if (packageBytes.length !== size) {
+    throw new Error(`cortex.js and cortex.data.json are from different versions of the game (${source} says the data has ${size} bytes, the other ${packageBytes.length})`);
+  }
+  return packageBytes;
+}
+
+const showDownload = (done, total, note = '') => {
+  news();
+  if (loading()) status.textContent = `Downloading the game: ${megabytes(done)} of ${megabytes(total)} MB${note}`;
+};
+
+// Runs attempt(signal, alive) until it succeeds. The attempt calls alive() for every piece of
+// data, alive(true) for one that got further than any attempt before; after STALL_MS without
+// one it is aborted. A failed attempt is tried again after a pause, and the last error is
+// thrown after TRIES failures in a row; an attempt that got further starts the count again,
+// one that only got as far again does not (a download that starts over each time, and
+// breaks off at the same place, must end). Once the page has given up on loading, so does
+// this.
+async function withRetries(attempt, onRetry) {
+  for (let failures = 0; ; ) {
+    const controller = new AbortController();
+    let timer;
+    let progressed = false;
+    const alive = (further = false) => {
+      if (!loading()) controller.abort(new Error('loading has stopped'));
+      progressed ||= further;
+      news();
+      clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(new Error(`no data for ${STALL_MS / 1000} seconds`)), STALL_MS);
+    };
+    try {
+      alive();
+      return await attempt(controller.signal, alive);
+    } catch (error) {
+      failures = progressed ? 1 : failures + 1;
+      if (failures === TRIES || !loading()) throw new Error(`${error.message || error} (${failures} tries)`);
+      console.error(`${error.message || error}; trying again`);
+    } finally {
+      clearTimeout(timer);
+      controller.abort(); // whatever is left of this attempt's request
+    }
+    onRetry?.();
+    await new Promise((resolve) => setTimeout(resolve, retryPause(failures)));
+  }
+}
+
+// Reads a response's body into packageBytes from offset on, and returns where it ended.
+async function readBody(response, offset, progress) {
+  const reader = response.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return offset;
+    if (offset + value.length > packageBytes.length) throw new Error(`${PACKAGE} is longer than the ${packageBytes.length} bytes expected`);
+    packageBytes.set(value, offset);
+    offset += value.length;
+    progress(offset);
+  }
+}
+
+// Downloads the package into packageBytes. After a failure it asks for the rest only
+// (Range): a server that answers 206 sends it, one that answers 200 sends it all again.
+// If-Range makes sure the rest is of the same file.
+function downloadPackage() {
+  const size = packageBytes.length;
+  let received = 0; // what the next attempt need not ask for again
+  let furthest = 0; // the most of it any attempt has had
+  let resumable = false;
+  let validator = null;
+  return withRetries(async (signal, alive) => {
+    // Every byte came, on a connection that then stopped instead of ending: the hash decides.
+    if (received === size) return;
+    showDownload(received, size);
+    const headers = received ? { Range: `bytes=${received}-`, ...(validator && { 'If-Range': validator }) } : {};
+    // Cache Storage keeps the package; the HTTP cache would only keep a second copy.
+    const response = await fetch(PACKAGE, { cache: 'no-store', headers, signal });
+    if (response.status === 206 && !response.headers.get('Content-Range')?.startsWith(`bytes ${received}-`)) {
+      received = 0;
+      throw new Error(`${PACKAGE}: the server sent another range than the one asked for`);
+    } else if (response.status !== 206) {
+      if (response.status !== 200) throw new Error(`${PACKAGE}: ${response.status} ${response.statusText}`.trim());
+      received = 0;
+      // A compressed response's length and ranges are not the package's.
+      resumable = !response.headers.get('Content-Encoding');
+      const length = response.headers.get('Content-Length');
+      if (resumable && length !== null && Number(length) !== size) throw new Error(`${PACKAGE} has ${length} bytes, not the ${size} of this version of the game`);
+      const etag = response.headers.get('ETag');
+      validator = etag && !etag.startsWith('W/') ? etag : response.headers.get('Last-Modified');
+    }
+    const end = await readBody(response, received, (offset) => {
+      if (resumable) received = offset;
+      alive(offset > furthest);
+      furthest = Math.max(furthest, offset);
+      showDownload(offset, size);
+    });
+    if (end !== size) throw new Error(`the download of ${PACKAGE} ended after ${end} of ${size} bytes`);
+  }, () => showDownload(received, size, ' (trying again…)'));
+}
+
+async function sha256(bytes) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// Takes a cached copy that is whole and right; drops any other.
+async function readCachedPackage(cache, key, expected) {
+  const cached = await cache.match(key).catch(() => undefined);
+  if (!cached) return false;
+  try {
+    if ((await readBody(cached, 0, news)) === expected.size && (await sha256(packageBytes)) === expected.sha256) return true;
+    console.error(`The kept copy of ${PACKAGE} is damaged; downloading it again`);
+  } catch (error) {
+    console.error(`Could not read the kept copy of ${PACKAGE}: ${error}`);
+  }
+  await cache.delete(key).catch(() => {});
+  return false;
+}
+
+// Until this page brought the package itself, Emscripten's preload cache kept it in a
+// database of its own, which nothing reads now. Only that one goes: the saves are in the
+// databases named after their directories (/Userdata, /Mods, /ScreenShots).
+async function dropPreloadCache() {
+  if (!(await indexedDB.databases()).some(({ name }) => name === 'EM_PRELOAD_CACHE')) return;
+  await new Promise((done) => {
+    const request = indexedDB.deleteDatabase('EM_PRELOAD_CACHE');
+    request.onsuccess = request.onerror = request.onblocked = done;
+  });
+}
+
+// Keeps the checked package for later visits in place of what earlier versions of the game
+// kept, which goes first, to make room for it. The copy is taken now, while the bytes are
+// the checked ones (once main runs, the package's files, views into them, could be written
+// to), into a Blob, which the browser writes off this thread: a body streamed from here
+// would be written only as fast as the loading engine lets this thread run, and was still
+// unfinished, and lost, when the page was closed as the menu appeared.
+function keepPackage(cache, key, earlierDropped) {
+  const copy = new Response(new Blob([packageBytes]), { headers: { 'Content-Type': 'application/octet-stream' } });
+  const current = new URL(key, location.href).href;
+  earlierDropped
+    .then(() => cache.keys())
+    .then((requests) => Promise.all(requests.filter((request) => request.url !== current).map((request) => cache.delete(request))))
+    .then(() => cache.put(key, copy))
+    .catch((error) => console.error(`Could not keep ${PACKAGE} for the next visit: ${error}`));
+}
+
+async function loadPackage() {
+  const expected = await withRetries(async (signal) => {
+    const response = await fetch('cortex.data.json', { cache: 'no-cache', signal });
+    if (!response.ok) throw new Error(`cortex.data.json: ${response.status} ${response.statusText}`.trim());
+    return response.json();
+  });
+  packageBuffer(expected.size, 'cortex.data.json');
+  const cache = typeof caches === 'undefined' ? null : await caches.open(PACKAGE_CACHE).catch(() => null);
+  const key = `${PACKAGE}?sha256=${expected.sha256}`;
+  const cached = cache !== null && (await readCachedPackage(cache, key, expected));
+  if (!cached) {
+    // A download resumed from another version of the file than it began with, where If-Range
+    // could not tell, is caught here; the whole of it is downloaded once more.
+    for (let whole = 0; ; whole++) {
+      await downloadPackage();
+      if (loading()) status.textContent = 'Loading…';
+      const actual = await sha256(packageBytes);
+      if (actual === expected.sha256) break;
+      if (whole) throw new Error(`what arrived is not this version's ${PACKAGE} (SHA-256 ${actual.slice(0, 12)}…, expected ${expected.sha256.slice(0, 12)}…)`);
+      console.error(`${PACKAGE} arrived damaged; downloading it again`);
+    }
+  }
+  const earlierDropped = dropPreloadCache().catch(() => {});
+  if (cache && !cached) keepPackage(cache, key, earlierDropped);
+}
+
+// The program, cortex.wasm, fetched and compiled as it arrives, as Emscripten does, but by
+// the page (Module.instantiateWasm), so that its download reports news too: a returning
+// player whose package is kept still downloads a new program after an update, and on a
+// slow link that must not look like a stall. The response is split in two (clone): the
+// page counts the pieces of one, the compiler reads the other. Both are the fetched
+// response, whose compiled code the browser keeps for the next visit; it would not keep
+// that of a response the page made up (notes/files-and-saves.md).
+async function instantiateProgram(imports) {
+  const response = await fetch('cortex.wasm');
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`.trim());
+  const compiled = response.clone();
+  const pieces = response.body.getReader();
+  (async () => { while (!(await pieces.read()).done) news(); })().catch(() => {});
+  // Only a response that says it is application/wasm can be compiled while it arrives.
+  const type = (compiled.headers.get('Content-Type') || '').split(';')[0].trim().toLowerCase();
+  return type === 'application/wasm' ? WebAssembly.instantiateStreaming(compiled, imports)
+    : WebAssembly.instantiate(await compiled.arrayBuffer(), imports);
+}
 
 var Module = {
   canvas,
@@ -112,12 +336,34 @@ var Module = {
   serialLoops: query.has('serial-loops'),
   print: (line) => logLine(line),
   printErr: (line) => logLine(line, true),
-  // Emscripten reports the data package's download as "Downloading data... (done/total)".
-  setStatus: (text) => {
-    if (document.body.dataset.state !== 'loading') return;
-    const progress = /\((\d+)\/(\d+)\)/.exec(text || '');
-    status.textContent = progress ? `Downloading the game: ${megabytes(progress[1])} of ${megabytes(progress[2])} MB` : 'Loading…';
+  // Emscripten's own steps after the package ("Running...").
+  setStatus: () => {
+    news();
+    if (loading()) status.textContent = 'Loading…';
   },
+  // Each step main waits for (the program, the thread pool, the saves, the sound list, the
+  // package) as it starts and as it ends.
+  monitorRunDependencies: news,
+  instantiateWasm: (imports, receive) => {
+    instantiateProgram(imports).then(({ instance, module }) => receive(instance, module), (error) => {
+      if (loading()) failure(`Could not load cortex.wasm: ${error.message || error}. Reload the page to try again.`);
+    });
+    return {};
+  },
+  getPreloadedPackage: (name, size) => {
+    try {
+      return packageBuffer(size, 'cortex.js').buffer;
+    } catch (error) {
+      failure(`${error.message}. Reload the page to try again.`);
+      return new ArrayBuffer(size);
+    }
+  },
+  // main waits for the package, which is not let through once the page has given up on
+  // loading; nor does main start if the page gives up after that (startGame).
+  preRun: [() => {
+    Module.addRunDependency('cortex-data');
+    packageReady.then((ready) => ready && loading() && Module.removeRunDependency('cortex-data'));
+  }],
   onAbort: failure,
   onRuntimeInitialized: startGame,
   onExit: (code) => {
@@ -135,6 +381,24 @@ function load() {
   setState('loading');
   button.disabled = true;
   status.textContent = 'Loading…';
+  news();
+  // Time the page did not run is not silence: nothing could report news in it. A tick that
+  // comes much later than asked for means the computer slept (on some systems the page's
+  // clock runs on meanwhile) or the page was held up, and that gap is left out. A hidden
+  // tab's timers can be held back to one a minute while its downloads still report news,
+  // so there only a gap of more than 90 s is left out.
+  let lastTick = performance.now();
+  const watchdog = setInterval(() => {
+    const now = performance.now();
+    if (now - lastTick > (document.hidden ? 90000 : 5000)) lastNews = Math.min(now, lastNews + (now - lastTick));
+    lastTick = now;
+    if (!loading()) clearInterval(watchdog);
+    else if (now - lastNews > QUIET_MS) failure(`Loading made no progress for ${QUIET_MS / 1000} seconds. Reload the page to try again.`);
+  }, Math.min(1000, QUIET_MS / 4));
+  packageReady = loadPackage().then(() => true, (error) => {
+    if (loading()) failure(`Could not download the game data: ${error.message || error}. Reload the page to try again.`);
+    return false;
+  });
   const script = document.createElement('script');
   script.src = 'cortex.js';
   script.onerror = () => failure('Could not load cortex.js');
@@ -142,6 +406,14 @@ function load() {
 }
 
 function startGame() {
+  // The page gave up on loading (no news, a promise nothing handled) after the package was
+  // let through, while main still waited for another step, which then came: main does not
+  // start, nor does what would follow it, the sounds' download (a postRun of
+  // runtime/sound-files.js; Emscripten runs Module.postRun right after this).
+  if (!loading()) {
+    Module.postRun = [];
+    return;
+  }
   setState('running');
   button.disabled = true;
   canvas.focus();
@@ -191,6 +463,11 @@ window.addEventListener('keydown', (event) => {
 }, true);
 
 window.addEventListener('error', (event) => failure(event.error ? describeError(event.error) : event.message));
+// A promise that failed with nothing to handle it: while the game loads, that is why it
+// will not start. Once it runs, one is not the game's end, and the console has it.
+window.addEventListener('unhandledrejection', (event) => {
+  if (loading()) failure(describeError(event.reason));
+});
 if (Module.threadDiagnostics) setInterval(() => console.log('Engine stage: ' + Module.engineStage + ' visits=' + Module.engineStageVisits), 5000);
 
 if (!self.crossOriginIsolated) {

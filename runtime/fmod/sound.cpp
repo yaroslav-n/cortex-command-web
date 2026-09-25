@@ -52,6 +52,13 @@ namespace FMOD {
 		return found == system.soundFiles.end() ? nullptr : &found->second;
 	}
 
+	ma_uint64 MixLength(const SoundState& sound) {
+		// The frames the decoder produces when it converts the sound to the mixer's rate,
+		// rounded up; the length it reports can be a frame shorter. audio_contract compares
+		// the two at every sample rate the game's sounds use.
+		return sound.sampleRate == 0 ? 0 : (sound.frames * c_MixSampleRate + sound.sampleRate - 1) / sound.sampleRate;
+	}
+
 	Sound::Sound() :
 	    state(std::make_unique<SoundState>()) {}
 

@@ -34,7 +34,65 @@
 
 #include <array>
 
+#ifdef __EMSCRIPTEN__
+#include "ThreadMan.h"
+#include <emscripten.h>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
+#include <cstdio>
+#include <vector>
+#endif
+
 using namespace RTE;
+
+#ifdef __EMSCRIPTEN__
+namespace {
+	// Each preset transparency table best-fits 65,280 colour pairs against the
+	// palette, and building the 21 of them one after another took most of a second
+	// of every start. Each is a pure function of the palette that writes only its
+	// own table, so the priority pool's workers and this thread build them
+	// together, each taking the next table from one counter until none is left.
+	// Only this thread yields to the browser, between its rows. A table's bytes do
+	// not depend on which thread built it.
+	void BrowserCreateTransTables(const std::vector<std::pair<COLOR_MAP*, int>>& tables, const RGB* palette) {
+		std::atomic<size_t> nextTable = 0;
+		const auto createTables = [&tables, palette, &nextTable](void (*rowCallback)(int)) {
+			for (size_t table = nextTable++; table < tables.size(); table = nextTable++) {
+				const auto& [colorTable, blendAmount] = tables[table];
+				create_trans_table(colorTable, palette, blendAmount, blendAmount, blendAmount, rowCallback);
+			}
+		};
+		BS::thread_pool& threadPool = g_ThreadMan.GetPriorityThreadPool();
+		BS::multi_future<void> workerTables;
+		for (BS::concurrency_t worker = 0; worker < threadPool.get_thread_count(); ++worker) {
+			workerTables.push_back(threadPool.submit([&createTables] { createTables(nullptr); }));
+		}
+		createTables([](int) { BrowserCooperativeYield(); });
+		workerTables.wait();
+	}
+
+	// Under ?perf-debug, how long the preset transparency tables took to build, and
+	// a hash of their bytes (64-bit FNV-1a, in preset order), which must not depend
+	// on how they were built.
+	void BrowserReportPresetColorTables(const std::vector<std::pair<COLOR_MAP*, int>>& tables, std::chrono::steady_clock::time_point buildStart) {
+		static const bool enabled = MAIN_THREAD_EM_ASM_INT({ return Module['perfDiagnostics'] === true; });
+		if (!enabled) {
+			return;
+		}
+		const double milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
+		uint64_t hash = 14695981039346656037ULL;
+		for (const auto& [colorTable, blendAmount]: tables) {
+			for (const auto& row: colorTable->data) {
+				for (unsigned char entry: row) {
+					hash = (hash ^ entry) * 1099511628211ULL;
+				}
+			}
+		}
+		std::fprintf(stderr, "Browser colour tables: %zu in %.0f ms, hash %016llx\n", tables.size(), milliseconds, static_cast<unsigned long long>(hash));
+	}
+} // namespace
+#endif
 
 void BitmapDeleter::operator()(BITMAP* bitmap) const { destroy_bitmap(bitmap); }
 void SurfaceDeleter::operator()(SDL_Surface* surface) const { SDL_DestroySurface(surface); }
@@ -172,6 +230,11 @@ void FrameMan::CreatePresetColorTables() {
 
 	// Create transparency color tables. Tables for other blend modes will be created on demand.
 	int transparencyPresetCount = BlendAmountLimits::MaxBlend / c_BlendAmountStep;
+#ifdef __EMSCRIPTEN__
+	const std::chrono::steady_clock::time_point buildStart = std::chrono::steady_clock::now();
+	// Every map entry is made here, before any table is built on another thread.
+	std::vector<std::pair<COLOR_MAP*, int>> presetTables;
+#endif
 	for (int index = 0; index <= transparencyPresetCount; ++index) {
 		int presetBlendAmount = index * c_BlendAmountStep;
 		std::array<int, 4> colorChannelBlendAmounts = {presetBlendAmount, presetBlendAmount, presetBlendAmount, BlendAmountLimits::MinBlend};
@@ -179,15 +242,16 @@ void FrameMan::CreatePresetColorTables() {
 
 		m_ColorTables.at(DrawBlendMode::BlendTransparency).try_emplace(colorChannelBlendAmounts);
 #ifdef __EMSCRIPTEN__
-		// Each table best-fits 65,536 colour pairs against the palette; all of them
-		// together froze the page for most of a second at startup. The per-row
-		// progress callback lets the browser in between.
-		create_trans_table(&m_ColorTables[DrawBlendMode::BlendTransparency].at(colorChannelBlendAmounts).first, m_DefaultPalette, adjustedBlendAmount, adjustedBlendAmount, adjustedBlendAmount, [](int) { BrowserCooperativeYield(); });
+		presetTables.emplace_back(&m_ColorTables[DrawBlendMode::BlendTransparency].at(colorChannelBlendAmounts).first, adjustedBlendAmount);
 #else
 		create_trans_table(&m_ColorTables[DrawBlendMode::BlendTransparency].at(colorChannelBlendAmounts).first, m_DefaultPalette, adjustedBlendAmount, adjustedBlendAmount, adjustedBlendAmount, nullptr);
 #endif
 		m_ColorTables[DrawBlendMode::BlendTransparency].at(colorChannelBlendAmounts).second = -1;
 	}
+#ifdef __EMSCRIPTEN__
+	BrowserCreateTransTables(presetTables, m_DefaultPalette);
+	BrowserReportPresetColorTables(presetTables, buildStart);
+#endif
 }
 
 void FrameMan::Destroy() {

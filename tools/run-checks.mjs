@@ -10,9 +10,15 @@
 //     tests/check-report.js (window.checkResult);
 //   - the Node contracts, whose output must equal tests/golden/;
 //   - the game itself: its start screen downloads nothing until asked (and explains
-//     itself to a browser without JSPI), Ctrl+F there opens fullscreen, it boots to
-//     the main menu, every sound file it fetches after the start arrives, and the
-//     deterministic simulation harness reproduces its recorded state hashes.
+//     itself to a browser without JSPI), Ctrl+F there opens fullscreen, its data
+//     package's download goes on after the connection breaks or stops, refuses a
+//     wrong package, and says why when it gives up, and the game then never starts;
+//     time the page does not run is not taken for a stall; it boots to the main
+//     menu with the transparency tables it has always built, every sound file it
+//     fetches after the start arrives, even through a bad network, and the
+//     deterministic simulation harness reproduces its recorded state hashes, with
+//     the performance overlay hidden and shown; its counters and the master Lua
+//     state's script timings record only while it is shown.
 // --log prints each check's page output, which otherwise shows only on failure.
 // Build first: ./build.sh --target checks. Exit status is 0 only if every check passed.
 
@@ -47,6 +53,7 @@ const CHECKS = [
   { name: 'gui-input', page: 'gui-input-check.html' },
   { name: 'thread-wait', page: 'thread-wait-check.html' },
   { name: 'frame-readback', page: 'frame-readback-check.html' },
+  { name: 'relative-mouse', page: 'relative-mouse-check.html' },
   { name: 'texture-tile', page: 'texture-tile-check.html' },
   { name: 'texture-gpu', page: 'texture-gpu-check.html' },
   { name: 'storage-race', page: 'storage-race-check.html' },
@@ -60,7 +67,148 @@ const CHECKS = [
   { name: 'start-screen', start: { expect: 'offer-play', label: /^Play Game$/, strip: true } },
   // A browser without JSPI is told so and downloads nothing.
   { name: 'start-screen-no-jspi', start: { expect: 'unsupported', removeJspi: true } },
+  // The data package's download goes wrong the ways a network can (FAULTS, for that check
+  // only). The page tries again, from where a download stopped, and when it gives up says
+  // why instead of waiting for good; it keeps only a package that is whole and right.
+  // ?load-timeout makes its deadlines short (site/index.html).
+  {
+    name: 'package-unavailable',
+    game: '?load-timeout=6000',
+    download: true,
+    fault: 'unavailable',
+    fails: /^Could not download the game data: cortex\.data: 503 Service Unavailable \(5 tries\)\. Reload the page to try again\.$/,
+    verify: (requests) => requestsFor(requests, '/cortex.data').length !== 5 && `cortex.data was asked for ${requestsFor(requests, '/cortex.data').length} times, not 5`,
+  },
+  {
+    // A server that sends the whole package whatever is asked for, and breaks off at the
+    // same place every time: no attempt gets further than the first, and the page gives up.
+    name: 'package-cut-always',
+    game: '?load-timeout=6000',
+    download: true,
+    fault: 'cutAlways',
+    fails: /^Could not download the game data: .+ \(5 tries\)\. Reload the page to try again\.$/,
+  },
+  {
+    // Downloaded twice, in case the first had been resumed from another version of the file.
+    name: 'package-tampered',
+    game: '?load-timeout=10000',
+    download: true,
+    fault: 'tampered',
+    fails: /^Could not download the game data: what arrived is not this version's cortex\.data \(SHA-256 [0-9a-f]{12}…, expected [0-9a-f]{12}…\)\. Reload the page to try again\.$/,
+    verify: async (requests, tab) => {
+      if (requestsFor(requests, '/cortex.data').length !== 2) return `cortex.data was asked for ${requestsFor(requests, '/cortex.data').length} times, not 2`;
+      const kept = await tab.evaluate("caches.open('cortex-data').then((cache) => cache.keys()).then((keys) => keys.length)");
+      return kept !== 0 && `${kept} packages kept`;
+    },
+  },
   { name: 'game-boot', game: '', expect: /^Browser menu: entered$/, timeoutMs: 180000 },
+  // A returning visit takes the package from Cache Storage, where game-boot left it, and
+  // does not download it.
+  {
+    name: 'package-kept',
+    game: '',
+    expect: /^Browser menu: entered$/,
+    timeoutMs: 180000,
+    verify: (requests) => requestsFor(requests, '/cortex.data').length && 'cortex.data was downloaded again (this check follows game-boot)',
+  },
+  {
+    name: 'package-cut-short',
+    game: '?load-timeout=9000',
+    download: true,
+    fault: 'cut',
+    expect: /^Browser menu: entered$/,
+    timeoutMs: 180000,
+    verify: (requests) => resumed(requests),
+  },
+  {
+    name: 'package-stalled',
+    game: '?load-timeout=9000',
+    download: true,
+    fault: 'stall',
+    expect: /^Browser menu: entered$/,
+    timeoutMs: 180000,
+    verify: (requests) => resumed(requests),
+  },
+  {
+    // Every byte arrives but the response never ends: when the stall's deadline has passed
+    // the hash decides, and nothing more is asked for (a request for the rest would get 416).
+    name: 'package-unended',
+    game: '?load-timeout=9000',
+    download: true,
+    fault: 'unended',
+    expect: /^Browser menu: entered$/,
+    timeoutMs: 180000,
+    verify: (requests) => requestsFor(requests, '/cortex.data').length !== 1 && `cortex.data was asked for ${requestsFor(requests, '/cortex.data').length} times, not once`,
+  },
+  // Any step of loading that stops is noticed, not only the package's download, and so is
+  // a promise that fails with nothing to handle it; once the game runs, one does not stop it.
+  {
+    name: 'load-stalled',
+    game: '?load-timeout=5000',
+    fault: 'noProgram',
+    fails: /^Loading made no progress for 5 seconds\. Reload the page to try again\.$/,
+  },
+  {
+    // The page gives up after the package was let through, while main still waits for
+    // the list of sound files, which the server holds until then: when the list comes
+    // after all, neither the game nor the sounds' download starts.
+    name: 'load-gave-up',
+    game: '?load-timeout=5000',
+    fault: 'heldSoundList',
+    fails: /^Loading made no progress for 5 seconds\. Reload the page to try again\.$/,
+    verify: async (requests, tab) => {
+      const { list, wrong } = await soundListAlone(tab, requests, 1000);
+      if (wrong) return wrong;
+      list.release();
+      if (!(await waitFor(tab, 'Module.calledRun === true', 10000))) return 'loading did not go on once the list arrived';
+      await sleep(2000);
+      const state = await tab.evaluate('document.body.dataset.state');
+      if (state !== 'failed') return `the game started after the page had given up (${state})`;
+      // The sounds' download shows its progress as it starts, even with every file cached.
+      const sounds = requests.filter((request) => request.path.startsWith('/audio/') && request.path !== '/audio/manifest.tsv');
+      if (sounds.length || (await tab.evaluate("document.getElementById('sound-files').hasAttribute('style')"))) return `the sounds' download started after the page had given up (${sounds.length} files asked for)`;
+      return '';
+    },
+  },
+  {
+    // Time the page does not run is not taken for a stall, as when a computer sleeps on
+    // a system whose clock runs on meanwhile: once main waits only for the list of sound
+    // files, which the server holds, the page's thread is kept busy for 8 s, longer than
+    // the page waits for news, and then the list is sent.
+    name: 'load-paused',
+    game: '?load-timeout=5000',
+    fault: 'heldSoundList',
+    whileLoading: async (tab, requests) => {
+      const { list, wrong } = await soundListAlone(tab, requests, 20000);
+      if (wrong) return wrong;
+      await tab.evaluate('{ const end = performance.now() + 8000; while (performance.now() < end); }');
+      list.release();
+      return '';
+    },
+    expect: /^Browser menu: entered$/,
+    timeoutMs: 180000,
+  },
+  { name: 'load-rejection', game: '', reject: 'loading', fails: /^a promise nothing handled$/ },
+  { name: 'running-rejection', game: '', reject: 'running', expect: /^Browser menu: entered$/, timeoutMs: 180000 },
+  // A step that is slow but goes on is not taken for one that stopped: the program arrives
+  // over twice as long as the page waits for news, as a returning player's does after an
+  // update, on a slow link, while the package comes from Cache Storage (where the checks
+  // before left it).
+  { name: 'slow-program', game: '?load-timeout=5000', fault: 'slowProgram', expect: /^Browser menu: entered$/, timeoutMs: 180000 },
+  // The page fetches the program itself (site/index.html): one that is not there is said so,
+  // and one from a host that does not call it application/wasm still runs.
+  { name: 'program-missing', game: '', fault: 'noProgramFile', fails: /^Could not load cortex\.wasm: 404 Not Found\. Reload the page to try again\.$/ },
+  { name: 'program-untyped', game: '', fault: 'untypedProgram', expect: /^Browser menu: entered$/, timeoutMs: 180000 },
+  {
+    // FrameMan's 21 preset transparency tables, built at startup on the thread pool
+    // and the engine thread together, must hold exactly the bytes the serial build
+    // (the original's loop) made; ?perf-debug prints a hash of them.
+    name: 'colour-tables',
+    game: '?perf-debug',
+    expect: /^Browser colour tables: 21 in \d+ ms, hash 2452950435e18642$/,
+    result: /^Browser colour tables: /,
+    timeoutMs: 120000,
+  },
   {
     name: 'simulate-tutorial',
     game: '?simulate=600&parallel=0',
@@ -75,12 +223,80 @@ const CHECKS = [
     timeoutMs: 120000,
   },
   {
+    // With the performance overlay hidden, as it is by default, only each step's total
+    // is measured (PerformanceMan::StartPerformanceMeasurement).
     name: 'simulate-dummy-assault',
     game: '?simulate-activity=Dummy%20Assault%7CDummy%20Assault&simulate=300&parallel=0',
     expect: /^Simulation: 300 steps, parallel mask 0, 191 objects, state hash 1e215e18472c610a, RNG 38865 draws hash cd713471b45b3fec$/,
+    alsoExpect: [/^Performance counters \(microseconds per step\): Total [1-9][0-9]*, Act AI 0, Act Travel 0, Act Update 0, Prt Travel 0, Prt Update 0, Activity 0, Scripts 0; master state scripts: [0-9]+ calls, 0 microseconds$/],
     timeoutMs: 300000,
   },
+  {
+    // A mission with scripts in the master Lua state, the only state whose calls are
+    // timed: its invisible automover controller and one automover node, two calls a
+    // step. With the overlay hidden they are counted but not timed (LuaMan.cpp).
+    name: 'simulate-zero-g',
+    game: '?simulate-activity=One-Man%20Army%20(Zero-G)%7CZero-G%20Battle&simulate=300&parallel=0',
+    expect: /^Simulation: 300 steps, parallel mask 0, 22 objects, state hash 331fc00d0a8b544b, RNG 9443 draws hash 254be292799af753$/,
+    alsoExpect: [/^Performance counters \(microseconds per step\): Total [1-9][0-9]*, Act AI 0, Act Travel 0, Act Update 0, Prt Travel 0, Prt Update 0, Activity 0, Scripts 0; master state scripts: 2 calls, 0 microseconds$/],
+    timeoutMs: 300000,
+  },
+  {
+    // The same run with the overlay shown (?perf-debug shows it from the start): every
+    // counter that has something to measure records, the master state's two calls are
+    // timed, and the result is the same, since measuring changes nothing in the
+    // simulation. (This mission has next to no particles to update.)
+    name: 'simulate-overlay-shown',
+    game: '?simulate-activity=One-Man%20Army%20(Zero-G)%7CZero-G%20Battle&simulate=300&parallel=0&perf-debug',
+    expect: /^Simulation: 300 steps, parallel mask 0, 22 objects, state hash 331fc00d0a8b544b, RNG 9443 draws hash 254be292799af753$/,
+    alsoExpect: [/^Performance counters \(microseconds per step\): Total [1-9][0-9]*, Act AI [1-9][0-9]*, Act Travel [1-9][0-9]*, Act Update [1-9][0-9]*, Prt Travel [0-9]+, Prt Update [0-9]+, Activity [1-9][0-9]*, Scripts [1-9][0-9]*; master state scripts: 2 calls, [1-9][0-9]* microseconds$/],
+    timeoutMs: 300000,
+  },
+  // The sound files through a bad network, each from the network rather than the cache
+  // (these two empty it). The page's timeouts are shortened for them: a download that
+  // receives nothing for 4 s is dropped, and the page stops waiting for missing files
+  // after 10 s without any arriving (20 s and 3 minutes for players).
+  {
+    // One request never answered, 20 cut off, all refused (503) for 3 s part way and one
+    // of those never found until the rest are here: all arrive.
+    name: 'sound-files-faults',
+    faults: 'network',
+    game: '?sound-file-timeouts=4,180',
+    timeoutMs: 120000,
+  },
+  {
+    // Two files missing: an Activity starts after the page stops waiting, and they
+    // arrive once they can be had and the browser says it is online.
+    name: 'sound-files-deadline',
+    faults: 'blocked',
+    game: '?simulate=30&parallel=0&sound-file-timeouts=20,10',
+    timeoutMs: 120000,
+  },
 ];
+
+const requestsFor = (requests, path) => requests.filter((request) => request.path === path);
+// Waits until the list of sound files is held (FAULTS.heldSoundList) and is all main still
+// waits for: Emscripten's count of those steps (runDependencies, a global of cortex.js) is
+// down to 1, so the package has been let through. Gives the held request, or why not.
+async function soundListAlone(tab, requests, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let list;
+  while (!(list = requestsFor(requests, '/audio/manifest.tsv')[0])?.release) {
+    if (Date.now() > deadline) return { wrong: 'the list of sound files was not asked for' };
+    await sleep(100);
+  }
+  if (await waitFor(tab, 'runDependencies === 1', Math.max(deadline - Date.now(), 500))) return { list };
+  return { wrong: `main waits for ${await tab.evaluate('runDependencies')} steps, not only the list of sound files` };
+}
+// The download that broke off went on from where it stopped: the second request for the
+// package asked for the rest of the same version of it (If-Range, the first one's ETag),
+// and got it.
+function resumed(requests) {
+  const [first, second] = requestsFor(requests, '/cortex.data');
+  if (!second || second.status !== 206 || !(second.start > 0)) return `not resumed: ${JSON.stringify(requestsFor(requests, '/cortex.data'))}`;
+  if (second.ifRange !== first.etag) return `resumed with If-Range ${second.ifRange}, not ${first.etag}`;
+  return '';
+}
 
 function parseArguments(argv) {
   const options = { angle: 'swiftshader', dist: join(ROOT, 'dist') };
@@ -124,7 +340,22 @@ const CONTENT_TYPES = {
 };
 
 // The same headers serve.py sends: SharedArrayBuffer needs cross-origin isolation.
-function serve(directory) {
+const HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Cache-Control': 'no-cache',
+};
+
+// Serves the build. A request for the rest of a file (Range: bytes=N-) gets it, 206, as
+// from a real host, or 416 if nothing is left, unless its If-Range names another version
+// of the file than the ETag says. traffic.requests records each request; traffic.fault, which a check can set, may
+// answer one itself (and return true) to break the game's download the way a network
+// does, in the middle of a body too, which the DevTools protocol cannot. A check can also
+// have the sound files its page asks for served badly (server.soundFaults, below);
+// requests from other pages, such as one an earlier check's closing tab still had under
+// way, are served as usual.
+function serve(directory, traffic) {
   const server = createServer((request, response) => {
     const path = normalize(decodeURIComponent(new URL(request.url, 'http://x').pathname));
     const file = join(directory, path === '/' ? 'index.html' : path);
@@ -133,18 +364,179 @@ function serve(directory) {
       response.end();
       return;
     }
-    response.writeHead(200, {
+    const { size, mtimeMs } = statSync(file);
+    const etag = `"${Math.round(mtimeMs).toString(36)}-${size.toString(36)}"`;
+    const range = /^bytes=(\d+)-$/.exec(request.headers.range || '');
+    const ifRange = request.headers['if-range'];
+    const start = range && (!ifRange || ifRange === etag) ? Number(range[1]) : 0;
+    const served = { path, start, status: !start ? 200 : start < size ? 206 : 416, ifRange, etag };
+    const earlier = traffic.requests.filter((other) => other.path === path).length;
+    traffic.requests.push(served);
+    if (traffic.fault?.({ path, file, size, etag, earlier, served }, response)) return;
+    const faults = server.soundFaults;
+    if (faults && request.headers.referer === faults.page && path.startsWith('/audio/') && path !== '/audio/manifest.tsv') {
+      const headers = { 'Content-Type': CONTENT_TYPES[extname(file)] || 'application/octet-stream', 'Content-Length': size, ...HEADERS };
+      if (faults.serve(path, response, file, headers)) return;
+    }
+    if (served.status === 416) {
+      response.writeHead(416, { 'Content-Range': `bytes */${size}`, ...HEADERS }).end();
+      return;
+    }
+    response.writeHead(served.status, {
       'Content-Type': CONTENT_TYPES[extname(file)] || 'application/octet-stream',
-      'Content-Length': statSync(file).size,
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
-      'Cross-Origin-Resource-Policy': 'same-origin',
-      'Cache-Control': 'no-cache',
+      'Content-Length': size - start,
+      ...(start ? { 'Content-Range': `bytes ${start}-${size - 1}/${size}` } : {}),
+      'Accept-Ranges': 'bytes',
+      ETag: etag,
+      ...HEADERS,
     });
-    createReadStream(file).pipe(response);
+    createReadStream(file, { start }).pipe(response);
   });
   return new Promise((done) => server.listen(0, '127.0.0.1', () => done(server)));
 }
+
+// A network that fails the sound downloads in the ways runtime/sound-files.js must
+// survive: 20 cut off after their first bytes; once 300 files have been served whole,
+// the cut ones among them, so that the page has nothing left to try again, every sound
+// file refused (503) for 3 s, long enough for the page to go to one file at a time,
+// the first of them then not found (404) until the check mends it, so that it keeps
+// failing all along; and after that one request never answered. Files served whole
+// are counted in `whole`.
+function badNetwork() {
+  const faults = { refused: 0, requests: 0, outageFrom: 0, afterOutage: 0, broken: '', brokenRefused: 0, mended: false, held: '', heldClosed: false, heldServed: false, cut: new Map(), whole: new Set() };
+  const refuse = (response, headers, status) => {
+    response.writeHead(status, { ...headers, 'Content-Length': 0 });
+    response.end();
+    return true;
+  };
+  faults.serve = (path, response, file, headers) => {
+    if (path === faults.broken && !faults.mended) {
+      faults.brokenRefused++;
+      return refuse(response, headers, 404);
+    }
+    const now = Date.now();
+    if (faults.whole.size >= 300 && faults.cut.size === 20 && [...faults.cut.keys()].every((cut) => faults.whole.has(cut))) faults.outageFrom ||= now;
+    if (faults.outageFrom && now - faults.outageFrom < 3000) {
+      faults.refused++;
+      faults.broken ||= path;
+      return refuse(response, headers, 503);
+    }
+    if (path === faults.held) faults.heldServed = true;
+    if (faults.outageFrom && !faults.held && ++faults.afterOutage === 5) {
+      faults.held = path;
+      response.on('close', () => (faults.heldClosed = true));
+      return true;
+    }
+    const request = ++faults.requests;
+    if (request % 10 === 0 && faults.cut.size < 20 && !faults.cut.has(path)) {
+      const bytes = readFileSync(file);
+      faults.cut.set(path, bytes.length);
+      response.writeHead(200, headers);
+      response.write(bytes.subarray(0, Math.min(16384, bytes.length >> 1)), () => response.destroy());
+      return true;
+    }
+    faults.whole.add(path);
+    return false;
+  };
+  return faults;
+}
+
+// Two sound files that cannot be had (404) until the check unblocks them. Each is used
+// by one sound only, so that two sounds go missing.
+function blockedSoundFiles(manifest) {
+  const uses = new Map();
+  for (const [, , , , name] of manifest) uses.set(name, (uses.get(name) || 0) + 1);
+  const blocked = new Set(manifest.filter(([, , , , name]) => uses.get(name) === 1).slice(-2).map(([, , , , name]) => '/audio/' + name));
+  const faults = { blocked, refused: 0 };
+  faults.serve = (path, response, file, headers) => {
+    if (!blocked.has(path)) return false;
+    faults.refused++;
+    response.writeHead(404, { ...headers, 'Content-Length': 0 });
+    response.end();
+    return true;
+  };
+  return faults;
+}
+
+// The first bytes of a file as the start of the whole of it, then whatever `then` does.
+function sendStart(response, request, bytes, then) {
+  Object.assign(request.served, { start: 0, status: 200 });
+  response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': request.size, ETag: request.etag, ...HEADERS });
+  response.write(readFileSync(request.file).subarray(0, bytes), then);
+}
+
+// What a check can do to the game's requests (serve).
+const FAULTS = {
+  // Every request for the data package fails.
+  unavailable: (request, response) => {
+    if (request.path !== '/cortex.data') return false;
+    request.served.status = 503;
+    response.writeHead(503, HEADERS).end();
+    return true;
+  },
+  // The data package arrives with one byte changed.
+  tampered: (request, response) => {
+    if (request.path !== '/cortex.data' || request.served.start) return false;
+    const bytes = readFileSync(request.file);
+    bytes[1e6] ^= 0xff;
+    response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bytes.length, ...HEADERS }).end(bytes);
+    return true;
+  },
+  // The first download of the data package breaks off after 20 MB: the connection is reset.
+  cut: (request, response) => request.path === '/cortex.data' && !request.earlier && (sendStart(response, request, 20e6, () => response.destroy()), true),
+  // Every download of the data package breaks off after 20 MB, from a server that sends
+  // all of it each time, whatever the request asks for.
+  cutAlways: (request, response) => request.path === '/cortex.data' && (sendStart(response, request, 20e6, () => response.destroy()), true),
+  // The first download of the data package brings every byte but never ends: it is sent
+  // in chunks, and the last, empty one that would end it never is.
+  unended: (request, response) => {
+    if (request.path !== '/cortex.data' || request.earlier) return false;
+    response.writeHead(200, { 'Content-Type': 'application/octet-stream', ETag: request.etag, ...HEADERS });
+    response.write(readFileSync(request.file));
+    return true;
+  },
+  // The first download of the data package stops after 20 MB, its connection left open.
+  stall: (request, response) => request.path === '/cortex.data' && !request.earlier && (sendStart(response, request, 20e6, () => {}), true),
+  // The program is never answered.
+  noProgram: (request) => request.path === '/cortex.wasm',
+  // The list of sound files is answered only when the check says so (served.release).
+  heldSoundList: (request, response) => {
+    if (request.path !== '/audio/manifest.tsv') return false;
+    request.served.release = () => {
+      const bytes = readFileSync(request.file);
+      response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bytes.length, ETag: request.etag, ...HEADERS }).end(bytes);
+    };
+    return true;
+  },
+  // The program is not there.
+  noProgramFile: (request, response) => {
+    if (request.path !== '/cortex.wasm') return false;
+    request.served.status = 404;
+    response.writeHead(404, HEADERS).end();
+    return true;
+  },
+  // The program is served as any file, not as application/wasm.
+  untypedProgram: (request, response) => {
+    if (request.path !== '/cortex.wasm') return false;
+    const bytes = readFileSync(request.file);
+    response.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': bytes.length, ...HEADERS }).end(bytes);
+    return true;
+  },
+  // The program arrives slowly, 64 KB every 60 ms (10 s for its 10.7 MB), and none of it
+  // is lost: slower than the check lets loading go without news, but never stopping.
+  slowProgram: (request, response) => {
+    if (request.path !== '/cortex.wasm') return false;
+    const bytes = readFileSync(request.file);
+    response.writeHead(200, { 'Content-Type': 'application/wasm', 'Content-Length': bytes.length, ETag: request.etag, ...HEADERS });
+    let offset = 0;
+    const timer = setInterval(() => {
+      if (response.destroyed) clearInterval(timer);
+      else if (offset >= bytes.length) clearInterval(timer), response.end();
+      else response.write(bytes.subarray(offset, (offset += 65536)));
+    }, 60);
+    return true;
+  },
+};
 
 async function launchChrome(path, angle) {
   const profile = mkdtempSync(join(tmpdir(), 'cortex-checks-'));
@@ -326,16 +718,53 @@ async function runStartScreen(connection, base, check) {
   });
 }
 
-async function runGame(connection, base, check) {
+// Opens the page and presses "Play Game", which loads the game and starts it as soon as
+// it has loaded (site/index.html). Returns why it did not start, if it did not.
+async function play(tab, url) {
+  await tab.send('Page.navigate', { url });
+  const state = "document.body.dataset.state";
+  if (!(await waitFor(tab, `${state} === 'offer-play'`, 60000))) return `the page offered no game (${await tab.evaluate(state)})`;
+  await tab.evaluate("document.getElementById('start').click()");
+  if (!(await waitFor(tab, `${state} === 'running'`, 240000))) return 'the game never started';
+  return '';
+}
+
+async function runGame(connection, base, check, traffic) {
   return withTab(connection, async (tab) => {
     const navigated = Date.now();
+    traffic.requests = [];
+    // A promise rejected with nothing to handle it as soon as the page is in that state.
+    if (check.reject) {
+      await tab.send('Page.addScriptToEvaluateOnNewDocument', { source: `new MutationObserver((changes, observer) => {
+        if (document.body.dataset.state !== ${JSON.stringify(check.reject)}) return;
+        observer.disconnect();
+        Promise.reject('a promise nothing handled');
+      }).observe(document, { subtree: true, attributeFilter: ['data-state'] });` });
+    }
     await tab.send('Page.navigate', { url: `${base}/index.html${check.game}` });
     // The start screen offers "Play Game", which loads the game and starts it as soon as
     // it has loaded (site/index.html).
     const state = "document.body.dataset.state";
     if (!(await waitFor(tab, `${state} === 'offer-play'`, 60000))) return { status: 'fail', detail: `the page offered no game (${await tab.evaluate(state)})`, lines: tab.lines };
+    // The data package as a first visit gets it, not from an earlier check.
+    if (check.download) await tab.evaluate("caches.delete('cortex-data')");
+    traffic.fault = FAULTS[check.fault] || null;
     await tab.evaluate("document.getElementById('start').click()");
-    if (!(await waitFor(tab, `${state} === 'running'`, 240000))) return { status: 'fail', detail: 'the game never started', lines: tab.lines };
+    // What a check does to the page while it loads.
+    const interfered = await check.whileLoading?.(tab, traffic.requests);
+    if (interfered) return { status: 'fail', detail: interfered, lines: tab.lines };
+    const reached = await waitFor(tab, `['running', 'failed'].includes(${state}) && ${state}`, 240000);
+    // The reason is the report's last line, but for the heap's size the page ends it with.
+    const report = reached === 'failed' ? (await tab.evaluate("document.getElementById('errors').textContent")).split('\n') : [];
+    const reason = report.filter((line) => !/^Heap: \d+ MB of \d+ MB$/.test(line)).pop() || '';
+    if (check.fails) {
+      if (reached !== 'failed') return { status: 'fail', detail: reached ? 'the game started' : 'the page never gave up', lines: tab.lines };
+      if (!check.fails.test(reason)) return { status: 'fail', detail: `the page says "${reason}"`, lines: tab.lines };
+      const wrong = await check.verify?.(traffic.requests, tab);
+      if (wrong) return { status: 'fail', detail: wrong, lines: tab.lines };
+      return { status: 'pass', detail: `${reason} (after ${((Date.now() - navigated) / 1000).toFixed(1)} s)`, lines: tab.lines, times: tab.times, started: navigated };
+    }
+    if (reached !== 'running') return { status: 'fail', detail: `the game never started${reason ? ': ' + reason : ''}`, lines: tab.lines };
     const played = Date.now();
     const deadline = Date.now() + check.timeoutMs;
     while (Date.now() < deadline) {
@@ -343,17 +772,115 @@ async function runGame(connection, base, check) {
       const lines = tab.lines.slice();
       const hit = lines.find((line) => check.expect.test(line));
       if (hit) {
+        // Lines the game prints before its result line must be there too.
+        const missing = (check.alsoExpect || []).find((pattern) => !lines.some((line) => pattern.test(line)));
+        if (missing) return { status: 'fail', detail: `no line matches ${missing}`, lines: tab.lines };
+        const wrong = await check.verify?.(traffic.requests, tab);
+        if (wrong) return { status: 'fail', detail: wrong, lines: tab.lines };
         const timing = `started ${((played - navigated) / 1000).toFixed(1)} s after opening, then ${((Date.now() - played) / 1000).toFixed(1)} s`;
         return { status: 'pass', detail: `${hit} (${timing})`, lines: tab.lines, times: tab.times, started: played };
       }
-      const simulated = lines.find((line) => line.startsWith('Simulation: ') && /state hash/.test(line));
-      if (simulated) return { status: 'fail', detail: `unexpected result: ${simulated}`, lines: tab.lines };
+      // A result line that is not the expected one fails at once.
+      const result = lines.find((line) => (check.result || /^Simulation: .*state hash/).test(line));
+      if (result) return { status: 'fail', detail: `unexpected result: ${result}`, lines: tab.lines };
       const failed = await tab.evaluate(`${state} === 'failed'`);
       if (failed) return { status: 'fail', detail: 'the game could not start', lines: tab.lines };
       await sleep(500);
     }
     return { status: 'fail', detail: 'timed out', lines: tab.lines };
   });
+}
+
+async function waitForLine(tab, pattern, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const line = tab.lines.find((text) => pattern.test(text));
+    if (line) return line;
+    if (await tab.evaluate("document.body.dataset.state === 'failed'")) return undefined;
+    await sleep(250);
+  }
+  return undefined;
+}
+
+// The sound files downloaded through a bad network (check.faults: badNetwork or
+// blockedSoundFiles). Each comes from the network: the cache earlier checks filled is
+// emptied first.
+async function runSoundFaults(connection, base, server, dist, check) {
+  const manifest = readFileSync(join(dist, 'audio', 'manifest.tsv'), 'utf8').split('\n').filter(Boolean).map((line) => line.split('\t'));
+  const faults = check.faults === 'network' ? badNetwork() : blockedSoundFiles(manifest);
+  faults.page = `${base}/index.html${check.game}`;
+  server.soundFaults = faults;
+  try {
+    return await withTab(connection, async (tab) => {
+      await tab.send('Storage.clearDataForOrigin', { origin: base, storageTypes: 'cache_storage' });
+      const failed = await play(tab, faults.page);
+      if (failed) return { status: 'fail', detail: failed, lines: tab.lines };
+      const played = Date.now();
+      const result = await (check.faults === 'network' ? survivesBadNetwork : startsWithSoundsMissing)(tab, faults, check, manifest);
+      const detail = `${result.detail} (${((Date.now() - played) / 1000).toFixed(1)} s after Play)`;
+      return { ...result, detail, lines: tab.lines, times: tab.times, started: played };
+    });
+  } finally {
+    server.soundFaults = null;
+  }
+}
+
+// Every sound file arrives, each fault was met and survived, and no copy that was cut
+// off was kept in the cache. The file that keeps failing must not hold up the others:
+// they all arrive before it is mended and the browser says it is online.
+async function survivesBadNetwork(tab, faults, check, manifest) {
+  const others = new Set(manifest.map(([, , , , name]) => name)).size - 1;
+  const deadline = Date.now() + check.timeoutMs;
+  while (faults.whole.size < others && Date.now() < deadline && !(await tab.evaluate("document.body.dataset.state === 'failed'"))) await sleep(250);
+  if (faults.whole.size < others) return { status: 'fail', detail: `only ${faults.whole.size} of the other ${others} files arrived while ${faults.broken || 'one'} kept failing` };
+  faults.mended = true;
+  await tab.evaluate("dispatchEvent(new Event('online'))");
+  const line = await waitForLine(tab, /^Sound files: /, 20000);
+  if (!line) return { status: 'fail', detail: 'the sound files never all arrived' };
+  const [, failed, tries] = /^Sound files: \d+ here, (\d+) failed, .*?(?:, (\d+) failed tries)?$/.exec(line) || [];
+  const failures = (path) => tab.lines.filter((text) => text.startsWith(`Could not load the sound file ${path.slice(1)} `));
+  const problems = [];
+  if (failed !== '0') problems.push(`${failed} failed`);
+  if (!faults.refused || !faults.brokenRefused || faults.cut.size !== 20 || !faults.held) problems.push(`the faults were not all made (${faults.refused} refused, ${faults.brokenRefused} not found, ${faults.cut.size} cut, held: ${faults.held || 'none'})`);
+  if (faults.held && !(faults.heldClosed && faults.heldServed && failures(faults.held).some((text) => /nothing arrived for/.test(text)))) problems.push(`the request never answered was not dropped and made again (${faults.held})`);
+  const unnoticed = [...faults.cut.keys()].filter((path) => !failures(path).length);
+  if (unnoticed.length) problems.push(`cut off but taken as whole: ${unnoticed.join(', ')}`);
+  if (Number(tries || 0) < faults.refused + faults.cut.size + 1) problems.push(`only ${tries || 0} failed tries counted for ${faults.refused} refused, ${faults.cut.size} cut and 1 never answered`);
+  const expected = JSON.stringify([...faults.cut].map(([path, size]) => [path.slice(1), size]));
+  const cached = await waitFor(tab, `(async () => {
+    const cache = await caches.open('cortex-sounds');
+    for (const [url, size] of ${expected}) {
+      const response = await cache.match(url);
+      if (!response || (await response.arrayBuffer()).byteLength !== size) return false;
+    }
+    return true;
+  })()`, 10000);
+  if (!cached) problems.push('a file cut off is not in the cache whole');
+  if (problems.length) return { status: 'fail', detail: problems.join('; ') };
+  return { status: 'pass', detail: `${line}; ${faults.refused} refused (503), 1 never answered and dropped, 20 cut off, 1 not found (404) ${faults.brokenRefused} times while all ${others} others arrived` };
+}
+
+// With two sound files missing, an Activity waits for them until the page stops waiting,
+// then starts, and the page says how many sounds are missing; once the files can be had
+// and the browser is back online, they arrive. (On a machine slow to load the game, the
+// page may stop waiting before the Activity asks; it then starts at once.)
+async function startsWithSoundsMissing(tab, faults, check) {
+  const result = await waitForLine(tab, /^Simulation: \d+ steps, /, check.timeoutMs);
+  if (!result) return { status: 'fail', detail: 'the Activity never started' };
+  const at = (pattern) => tab.lines.findIndex((text) => pattern.test(text));
+  const waited = at(/^Browser sounds: waiting for the last sound files/);
+  const gaveUp = at(/^Sound files: \d+ here, 2 failed, /);
+  const started = at(/^Simulation: \d+ steps, /);
+  if (gaveUp < 0 || started < gaveUp) return { status: 'fail', detail: `the Activity did not start once the page stopped waiting for two files (lines ${gaveUp}, ${started})` };
+  const shown = await tab.evaluate("document.getElementById('sound-files').textContent");
+  if (shown !== '2 sounds could not be downloaded; still trying') return { status: 'fail', detail: `the page says "${shown}"` };
+  const wait = waited >= 0 && waited < gaveUp ? `waited ${((tab.times[gaveUp] - tab.times[waited]) / 1000).toFixed(1)} s, then` : 'was asked for after the page had stopped waiting and';
+  faults.blocked.clear();
+  await tab.evaluate("dispatchEvent(new Event('online'))");
+  const arrived = await waitForLine(tab, /^Sound files: \d+ here, 0 failed, /, 10000);
+  if (!arrived) return { status: 'fail', detail: 'the missing files did not arrive once they could be had and the browser was online' };
+  if (!(await tab.evaluate("getComputedStyle(document.getElementById('sound-files')).display === 'none'"))) return { status: 'fail', detail: 'the page still says sounds are missing' };
+  return { status: 'pass', detail: `the Activity ${wait} started with "${shown}"; then ${arrived}` };
 }
 
 function runNode(dist, check) {
@@ -380,7 +907,8 @@ async function main() {
   }
   if (!existsSync(join(options.dist, 'index.html'))) throw new Error(`no build in ${options.dist}; run ./build.sh --target checks`);
 
-  const server = await serve(options.dist);
+  const traffic = { requests: [], fault: null };
+  const server = await serve(options.dist, traffic);
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await launchChrome(findChrome(options.chrome), options.angle);
   const connection = await Connection.open(browser.endpoint);
@@ -395,10 +923,12 @@ async function main() {
         if (check.page) result = await runPage(connection, base, check);
         else if (check.start) result = await runStartScreen(connection, base, check);
         else if (check.node) result = await runNode(options.dist, check);
-        else result = await runGame(connection, base, check);
+        else if (check.faults) result = await runSoundFaults(connection, base, server, options.dist, check);
+        else result = await runGame(connection, base, check, traffic);
       } catch (error) {
         result = { status: 'fail', detail: String(error.message || error) };
       }
+      traffic.fault = null;
       const seconds = ((Date.now() - started) / 1000).toFixed(1).padStart(6);
       const pass = result.status === 'pass';
       if (!pass) failures++;

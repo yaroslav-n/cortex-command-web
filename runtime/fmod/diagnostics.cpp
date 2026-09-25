@@ -84,9 +84,9 @@ namespace FMOD {
 		             system.master && system.master->state->voice ? ma_sound_get_volume(system.master->state->voice.get()) : -1.0,
 		             ma_engine_get_volume(&system.engine));
 		const DecodedSounds::Statistics decoded = system.decoded->GetStatistics();
-		std::fprintf(stderr, "  decoded sounds: %zu, %.1f MB; plays from memory %llu, decoding as they play %llu, waiting for their file %llu; channels %zu of %d, %llu stolen\n",
+		std::fprintf(stderr, "  decoded sounds: %zu, %.1f MB; plays from memory %llu, decoding as they play %llu, waiting for their file %llu, silent without it %llu; channels %zu of %d, %llu stolen\n",
 		             decoded.sounds, decoded.bytes / 1048576.0, decoded.playsFromMemory, decoded.playsDecoding, system.waitingPlays,
-		             system.channels.size(), system.maxChannels, system.stolenChannels);
+		             system.silentPlays, system.channels.size(), system.maxChannels, system.stolenChannels);
 		std::fprintf(stderr, "  fader: %llu calls, in peak %.3f, out peak %.3f\n",
 		             g_FaderCalls.exchange(0, std::memory_order_relaxed),
 		             g_FaderInPeakMilli.exchange(0, std::memory_order_relaxed) / 1000.0,

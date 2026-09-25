@@ -43,6 +43,8 @@ namespace RTE {
 			int m_Height = 0;
 			// An x offset to apply to the item (to allow nesting)
 			int m_OffsetX = 0;
+			// Whether the item heads a section of the list rather than being an entry in it, drawn on the skin's HeaderColorIndex where it has one
+			bool m_IsHeader = false;
 
 			Item() {}
 			~Item() {
@@ -318,6 +320,8 @@ namespace RTE {
 		std::vector<Item*> m_SelectedList;
 		unsigned long m_SelectedColorIndex;
 		unsigned long m_UnselectedColorIndex;
+		bool m_HasHeaderColor; //!< Whether the skin gives section headers a background of their own.
+		unsigned long m_HeaderColorIndex; //!< The background of section headers, in the alternate draw mode.
 
 		/// Build the drawing bitmap.
 		void BuildDrawBitmap();

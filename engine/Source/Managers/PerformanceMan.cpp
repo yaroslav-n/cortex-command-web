@@ -29,6 +29,9 @@ PerformanceMan::~PerformanceMan() {
 void PerformanceMan::Clear() {
 	m_ShowPerfStats = false;
 	m_AdvancedPerfStats = true;
+#ifdef __EMSCRIPTEN__
+	m_MeasureCounters = false;
+#endif
 	m_Sample = 0;
 	m_SimUpdateTimer = nullptr;
 	m_MSPSUs.clear();
@@ -61,10 +64,22 @@ void PerformanceMan::Initialize() {
 }
 
 void PerformanceMan::StartPerformanceMeasurement(PerformanceCounters counter) {
+#ifdef __EMSCRIPTEN__
+	// Every clock read is a call out to JavaScript, and the engine measures around every object and attachable it updates, for stats only the overlay
+	// shows. While it is hidden, only the total is measured: the overlay's percentages are of it.
+	if (counter != PerformanceCounters::SimTotal && !IsMeasuringCounters()) {
+		return;
+	}
+#endif
 	s_PerfMeasureStart[counter] = g_TimerMan.GetAbsoluteTime();
 }
 
 void PerformanceMan::StopPerformanceMeasurement(PerformanceCounters counter) {
+#ifdef __EMSCRIPTEN__
+	if (counter != PerformanceCounters::SimTotal && !IsMeasuringCounters()) {
+		return;
+	}
+#endif
 	s_PerfMeasureStop[counter] = g_TimerMan.GetAbsoluteTime();
 	AddPerformanceSample(counter, s_PerfMeasureStop[counter] - s_PerfMeasureStart[counter]);
 }
@@ -79,6 +94,16 @@ void PerformanceMan::NewPerformanceSample() {
 		m_PerfData[counter][m_Sample] = 0;
 		m_PerfPercentages[counter][m_Sample] = 0;
 	}
+
+#ifdef __EMSCRIPTEN__
+	// Decided once per sim update, before any of it runs. The overlay can be switched on in the middle of one (RAlt+P, or a script setting
+	// PerformanceMan.ShowPerformanceStats), and a measurement whose start was skipped but whose stop was not would add the time since an older start.
+	m_MeasureCounters = m_ShowPerfStats;
+	// The script list is not updated while the overlay is hidden (RunGameLoop), so it would be stale when the overlay is next shown.
+	if (!m_ShowPerfStats && !m_SortedScriptTimings.empty()) {
+		m_SortedScriptTimings.clear();
+	}
+#endif
 }
 
 void PerformanceMan::CalculateSamplePercentages() {
@@ -100,6 +125,16 @@ uint64_t PerformanceMan::GetPerformanceCounterAverage(PerformanceCounters counte
 	}
 	return totalPerformanceMeasurement / c_Average;
 }
+
+#ifdef __EMSCRIPTEN__
+std::string PerformanceMan::DescribeCounterAverages() const {
+	std::string description;
+	for (int counter = 0; counter < PerformanceCounters::PerfCounterCount; ++counter) {
+		description += (counter == 0 ? "" : ", ") + m_PerfCounterNames[counter] + " " + std::to_string(GetPerformanceCounterAverage(static_cast<PerformanceCounters>(counter)));
+	}
+	return description;
+}
+#endif
 
 void PerformanceMan::CalculateTimeAverage(std::deque<float>& timeMeasurements, float& avgResult, float newTimeMeasurement) const {
 	timeMeasurements.emplace_back(newTimeMeasurement);

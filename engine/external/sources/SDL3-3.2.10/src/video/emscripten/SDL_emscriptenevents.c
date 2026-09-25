@@ -272,6 +272,11 @@ static EM_BOOL Emscripten_HandleMouseMove(int eventType, const EmscriptenMouseEv
 {
     SDL_WindowData *window_data = userData;
     const bool isPointerLocked = window_data->has_pointer_lock;
+    /* A window in relative mode takes the pointer's movement whether the pointer is
+       locked or not. The browser drops the lock on Esc and when the page loses the
+       focus, and until a click gets it back, absolute positions would only be dropped
+       as a relative window's non-relative motion: nothing that aims would move. */
+    const bool isRelative = isPointerLocked || (window_data->window->flags & SDL_WINDOW_MOUSE_RELATIVE_MODE);
     float mx, my;
 
     // rescale (in case canvas is being scaled)
@@ -280,7 +285,7 @@ static EM_BOOL Emscripten_HandleMouseMove(int eventType, const EmscriptenMouseEv
     xscale = window_data->window->w / client_w;
     yscale = window_data->window->h / client_h;
 
-    if (isPointerLocked) {
+    if (isRelative) {
         mx = (float)(mouseEvent->movementX * xscale);
         my = (float)(mouseEvent->movementY * yscale);
     } else {
@@ -288,7 +293,7 @@ static EM_BOOL Emscripten_HandleMouseMove(int eventType, const EmscriptenMouseEv
         my = (float)(mouseEvent->targetY * yscale);
     }
 
-    SDL_SendMouseMotion(0, window_data->window, SDL_DEFAULT_MOUSE_ID, isPointerLocked, mx, my);
+    SDL_SendMouseMotion(0, window_data->window, SDL_DEFAULT_MOUSE_ID, isRelative, mx, my);
     return 0;
 }
 
@@ -318,8 +323,9 @@ static EM_BOOL Emscripten_HandleMouseButton(int eventType, const EmscriptenMouse
     SDL_assert(mouse != NULL);
 
     if (eventType == EMSCRIPTEN_EVENT_MOUSEDOWN) {
-        if (mouse->relative_mode && !window_data->has_pointer_lock) {
-            emscripten_request_pointerlock(window_data->canvas_id, 0); // try to regrab lost pointer lock.
+        // try to regrab lost pointer lock (asked of the window too, should SDL's own relative mode lag behind it).
+        if ((mouse->relative_mode || (window_data->window->flags & SDL_WINDOW_MOUSE_RELATIVE_MODE)) && !window_data->has_pointer_lock) {
+            emscripten_request_pointerlock(window_data->canvas_id, 0);
         }
         sdl_button_state = true;
     } else {

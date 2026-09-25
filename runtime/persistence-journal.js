@@ -1,10 +1,20 @@
-// Install before mounting IDBFS. Commit only mutations made by this runtime.
-Module.installPersistenceJournal = function () {
+// Install before mounting IDBFS. Commit only mutations made by this runtime, and a
+// file only once the streams writing it have closed: a save being written must not
+// replace the last complete one (see notes/files-and-saves.md). A file held open
+// goes out after openFileIdleMs without a write, unless it is a save archive or the
+// runtime has crashed; the page never passes it, the storage fixture shortens it.
+Module.installPersistenceJournal = function (openFileIdleMs = 60000) {
   if (IDBFS.cortexJournalInstalled) return;
   IDBFS.cortexJournalInstalled = true;
   const mountOriginal = IDBFS.mount;
   const syncOriginal = IDBFS.syncfs;
   const states = new WeakMap();
+  // Whether a file still open for writing goes out anyway. Never a save archive: only
+  // the save task writes one, and it closes it unless the save failed. Never after a
+  // crash: the page stays open and keeps flushing, and a file whose writer never
+  // closed it is half written for good.
+  const goesOutOpen = (path, change) => !path.endsWith('.ccsave') && performance.now() - change.time >= openFileIdleMs &&
+    !ABORT && !(typeof document !== 'undefined' && document.body?.dataset.state === 'failed');
   IDBFS.mount = function (mount) {
     const auto = mount.opts.autoPersist;
     mount.opts.autoPersist = false;
@@ -14,7 +24,7 @@ Module.installPersistenceJournal = function () {
     states.set(mount, state);
     const mark = (path, directory = false) => {
       if (state.restoring) return;
-      state.dirty.set(path, { version: ++state.sequence, directory });
+      state.dirty.set(path, { version: ++state.sequence, directory, time: performance.now() });
       if (auto) IDBFS.queuePersist(mount);
     };
     const paths = node => {
@@ -51,6 +61,28 @@ Module.installPersistenceJournal = function () {
       for (const operation of ['write', 'allocate', 'msync']) if (stream[operation]) node.stream_ops[operation] = function (...args) {
         const result = stream[operation](...args); mark(FS.getPath(args[0].node)); return result;
       };
+      // Count the streams open for writing on each file, duplicates included, since it
+      // was last opened for writing: an open starts the count again, so a writer that a
+      // failed save never closed does not hold back the next save. FS.open truncates
+      // before a stream exists, so the count is checked when committing, not when
+      // marking; the last writer's close queues the commit.
+      const counted = target => target.cortexWriter && target.cortexWriter === target.node.cortexOpens;
+      node.stream_ops.open = function (target) {
+        stream.open?.(target);
+        target.cortexWriter = target.isWrite && (target.node.cortexOpens = (target.node.cortexOpens || 0) + 1);
+        if (target.cortexWriter) target.node.cortexWriters = 1;
+      };
+      node.stream_ops.dup = function (target) {
+        stream.dup?.(target);
+        // FS.dupStream copies the original's tag.
+        if (counted(target)) target.node.cortexWriters++; else target.cortexWriter = 0;
+      };
+      node.stream_ops.close = function (target) {
+        try { return stream.close?.(target); } finally {
+          if (counted(target) && !--target.node.cortexWriters && auto && state.dirty.has(FS.getPath(target.node))) IDBFS.queuePersist(mount);
+          target.cortexWriter = 0;
+        }
+      };
     };
     wrap(root);
     return root;
@@ -70,6 +102,11 @@ Module.installPersistenceJournal = function () {
         return syncOriginal(mount, true, error => { state.restoring = false; done(error); });
       }
       const changes = new Map(state.dirty);
+      // A file still open for writing stays dirty, and IndexedDB keeps its last
+      // committed version.
+      for (const [path, change] of changes) {
+        if (FS.analyzePath(path).object?.cortexWriters && !goesOutOpen(path, change)) changes.delete(path);
+      }
       if (!changes.size) return done(null);
       const entries = new Map();
       const parents = new Map();

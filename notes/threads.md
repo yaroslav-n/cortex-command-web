@@ -1,6 +1,6 @@
 # Threads and browser scheduling
 
-Updated 2026-09-24.
+Updated 2026-09-25.
 
 Entry points: `engine/Source/Managers/ThreadMan.h` / `.cpp`,
 `engine/Source/System/System.h` (`BrowserCooperativeYield`),
@@ -150,7 +150,7 @@ worker thread: …", the engine's message box, and a clean stop.
 
 | pool | native | browser | used for |
 | --- | --- | --- | --- |
-| priority | `hardware_concurrency()` | **4** | work that must finish this frame: script states, actor AI, sight rays, MOID rebuild, pathfinding |
+| priority | `hardware_concurrency()` | **4** | work that must finish this frame: script states, actor AI, sight rays, MOID rebuild, pathfinding; at startup in the browser, the transparency tables |
 | background | `hardware_concurrency() / 2` | **2** | work that may span frames: save writing, async loading |
 
 The browser pools are **constructed** with their final sizes (`BS::thread_pool
@@ -260,16 +260,40 @@ Yield points: the `Reader` line loop; between terrain layer loads and procedural
 passes in `SLTerrain::LoadData`; around the placed-object loop and pathfinder
 reset in `Scene`; around scene teardown in `SceneMan::LoadScene`; around image
 decode and conversion in `ContentFile`; between the managers started in `main`,
-between Lua states in `LuaMan::Initialize`, on every row of the transparency
-tables `FrameMan` builds at startup (21 tables of 65,536 best-fit colours, most
-of a second with no yield), and for every control the menus build from their
-layout files; and the waits below.
+between Lua states in `LuaMan::Initialize`, after creating the WebGL context and
+before linking ScreenBlit in `WindowMan::Initialize`, on every row of the
+transparency tables the engine thread builds at startup (the priority pool builds
+the rest of them alongside it; see [rendering](rendering.md)), and for every
+control the menus build from their layout files; and the waits below.
 
 Under `?perf-debug`, a yield that comes more than 250 ms after the event loop
 last ran reports `Browser long block: N ms with no yield`. That report is how
 the blocks were found; since the per-frame wait counts as an event loop turn, it
-no longer misfires during play. The two-second frame report also counts the
-mid-frame yields and the time they took. Startup has no block over 250 ms left.
+no longer misfires during play. It knows only its own yields and the frame wait,
+so a stretch that went back to the event loop some other way is reported whole:
+miniaudio waits for its AudioWorklet with `emscripten_sleep`, which is why the
+start of audio can be reported longer than it blocked. The two-second frame
+report also counts the mid-frame yields and the time they took.
+
+What startup still does for more than 250 ms without a yield is two browser
+calls, each a single call that no yield can split. Measured on the Metal instance
+with the page's long-task observer, on a shared machine under load:
+
+| block | where | measured |
+| --- | --- | --- |
+| creating the AudioContext | `g_AudioMan`, in `ma_engine_init` | 233–1645 ms over twelve starts (median 362 ms with a fresh profile, 260 ms returning); 192–1026 ms in the build before |
+| creating the WebGL context | `WindowMan::InitializeOpenGL` | about 15 ms, but 1.4 s in 2 of 55 starts; 0.9–3 s on SwiftShader |
+| anything else | | at most 127 ms over the same twelve starts |
+
+Nearly all of the audio block is the `AudioContext` constructor itself
+(`_emscripten_create_audio_context` in a V8 profile), and it varies from start to
+start in both builds.
+
+`WindowMan::Initialize` used to run from creating the context to linking
+ScreenBlit without a yield: 460 ms on a first visit with cold caches (244 ms of it
+the context), 1.7 s in the slowest start seen on Metal, 2.1–3.2 s on SwiftShader.
+It now yields after the context and again before the ScreenBlit link, and what
+follows the context came in pieces of at most 245 ms, on SwiftShader.
 
 ## Waiting for pool work on the main thread
 

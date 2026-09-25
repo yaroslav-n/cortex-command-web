@@ -92,7 +92,7 @@ Each `LuaStateWrapper` owns:
 | `m_RegisteredMOs` | the objects whose scripts run here |
 | `m_AddedRegisteredMOs` | staging, merged by `LuaStateWrapper::Update` |
 | `m_ScriptCache` | compiled script functions as `LuabindObjectWrapper*`, keyed by script path then function name |
-| `m_ScriptTimings` | per-script timing for the performance overlay |
+| `m_ScriptTimings` | per-script timing for the performance overlay; only the master state's are kept, and in the browser the clock is read for them only while the overlay is shown (see [testing](testing.md)) |
 | `m_RandomGenerator` | what Lua's `math.random` / `RangeRand` / `PosRand` / `NormalRand` draw from |
 
 `m_RandomGenerator` is seeded exactly as the original does:

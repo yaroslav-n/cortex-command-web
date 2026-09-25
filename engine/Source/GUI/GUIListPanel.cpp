@@ -23,6 +23,8 @@ GUIListPanel::GUIListPanel(GUIManager* Manager) :
 	m_FontSelectColor = 0;
 	m_SelectedColorIndex = 0;
 	m_UnselectedColorIndex = 0;
+	m_HasHeaderColor = false;
+	m_HeaderColorIndex = 0;
 	m_CapturedHorz = false;
 	m_CapturedVert = false;
 	m_ExternalCapture = false;
@@ -53,6 +55,8 @@ GUIListPanel::GUIListPanel() :
 	m_FontSelectColor = 0;
 	m_SelectedColorIndex = 0;
 	m_UnselectedColorIndex = 0;
+	m_HasHeaderColor = false;
+	m_HeaderColorIndex = 0;
 	m_CapturedHorz = false;
 	m_CapturedVert = false;
 	m_ExternalCapture = false;
@@ -249,6 +253,9 @@ void GUIListPanel::BuildBitmap(bool UpdateBase, bool UpdateText) {
 		m_Skin->GetValue("Listbox", "UnselectedColorIndex", &m_UnselectedColorIndex);
 		m_UnselectedColorIndex = m_Skin->ConvertColor(m_UnselectedColorIndex, m_BaseBitmap->GetColorDepth());
 
+		m_HasHeaderColor = m_Skin->GetValue("Listbox", "HeaderColorIndex", &m_HeaderColorIndex);
+		m_HeaderColorIndex = m_Skin->ConvertColor(m_HeaderColorIndex, m_BaseBitmap->GetColorDepth());
+
 		// Load the font
 		m_Skin->GetValue("Listbox", "Font", &Filename);
 		m_Font = m_Skin->GetFont(Filename);
@@ -326,6 +333,12 @@ void GUIListPanel::BuildDrawBitmap() {
 			int textX = thirdWidth + 6 - itemX;
 			int textY = itemY + (itemHeight / 2) + 1;
 			int bitmapY = itemY + (itemHeight / 2) - (bitmapHeight / 2) + 1;
+
+			// A section header's background, between its two lines
+			if (I->m_IsHeader && m_HasHeaderColor) {
+				int headerRight = m_Width - (m_VertScroll->_GetVisible() ? m_VertScroll->GetWidth() + 2 : 5);
+				m_DrawBitmap->DrawRectangle(4, itemY + 2, headerRight - 3, itemHeight - 2, m_HeaderColorIndex, true);
+			}
 
 			// Draw the associated bitmap
 			if (I->m_pBitmap) {

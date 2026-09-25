@@ -80,6 +80,16 @@ namespace RTE {
 		/// Gets the average of the MSPF reading buffer, calculated each frame.
 		/// @return The average value of the MSPF reading buffer.
 		float GetMSPFAverage() const { return m_MSPFAverage; }
+
+#ifdef __EMSCRIPTEN__
+		/// Tells whether the current sim update is being measured for the performance stats, which it is only while they are shown. Set once per sim update by NewPerformanceSample().
+		/// @return Whether the current sim update is being measured.
+		bool IsMeasuringCounters() const { return m_MeasureCounters.load(std::memory_order_relaxed); }
+
+		/// Lists every performance counter's average over the last few samples, as the performance stats show them, in microseconds. For the simulation harness.
+		/// @return The counters' names and averages, comma separated.
+		std::string DescribeCounterAverages() const;
+#endif
 #pragma endregion
 
 #pragma region Performance Counter Handling
@@ -148,6 +158,9 @@ namespace RTE {
 
 		bool m_ShowPerfStats; //!< Whether to show performance stats on screen or not.
 		bool m_AdvancedPerfStats; //!< Whether to show performance graphs on screen or not.
+#ifdef __EMSCRIPTEN__
+		std::atomic_bool m_MeasureCounters; //!< Whether the current sim update is being measured: m_ShowPerfStats, taken at the start of the update.
+#endif
 
 		int m_Sample; //!< Sample counter.
 

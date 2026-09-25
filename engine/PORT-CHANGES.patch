@@ -956,6 +956,71 @@ diff -ruP --exclude=*.o original/Source/GUI/GUIInput.h port/Source/GUI/GUIInput.
  
  		int m_Player;
  
+diff -ruP --exclude=*.o original/Source/GUI/GUIListPanel.cpp port/Source/GUI/GUIListPanel.cpp
+--- original/Source/GUI/GUIListPanel.cpp	2026-09-24 10:48:58
++++ port/Source/GUI/GUIListPanel.cpp	2026-09-25 19:51:20
+@@ -23,6 +23,8 @@
+ 	m_FontSelectColor = 0;
+ 	m_SelectedColorIndex = 0;
+ 	m_UnselectedColorIndex = 0;
++	m_HasHeaderColor = false;
++	m_HeaderColorIndex = 0;
+ 	m_CapturedHorz = false;
+ 	m_CapturedVert = false;
+ 	m_ExternalCapture = false;
+@@ -53,6 +55,8 @@
+ 	m_FontSelectColor = 0;
+ 	m_SelectedColorIndex = 0;
+ 	m_UnselectedColorIndex = 0;
++	m_HasHeaderColor = false;
++	m_HeaderColorIndex = 0;
+ 	m_CapturedHorz = false;
+ 	m_CapturedVert = false;
+ 	m_ExternalCapture = false;
+@@ -249,6 +253,9 @@
+ 		m_Skin->GetValue("Listbox", "UnselectedColorIndex", &m_UnselectedColorIndex);
+ 		m_UnselectedColorIndex = m_Skin->ConvertColor(m_UnselectedColorIndex, m_BaseBitmap->GetColorDepth());
+ 
++		m_HasHeaderColor = m_Skin->GetValue("Listbox", "HeaderColorIndex", &m_HeaderColorIndex);
++		m_HeaderColorIndex = m_Skin->ConvertColor(m_HeaderColorIndex, m_BaseBitmap->GetColorDepth());
++
+ 		// Load the font
+ 		m_Skin->GetValue("Listbox", "Font", &Filename);
+ 		m_Font = m_Skin->GetFont(Filename);
+@@ -326,6 +333,12 @@
+ 			int textX = thirdWidth + 6 - itemX;
+ 			int textY = itemY + (itemHeight / 2) + 1;
+ 			int bitmapY = itemY + (itemHeight / 2) - (bitmapHeight / 2) + 1;
++
++			// A section header's background, between its two lines
++			if (I->m_IsHeader && m_HasHeaderColor) {
++				int headerRight = m_Width - (m_VertScroll->_GetVisible() ? m_VertScroll->GetWidth() + 2 : 5);
++				m_DrawBitmap->DrawRectangle(4, itemY + 2, headerRight - 3, itemHeight - 2, m_HeaderColorIndex, true);
++			}
+ 
+ 			// Draw the associated bitmap
+ 			if (I->m_pBitmap) {
+diff -ruP --exclude=*.o original/Source/GUI/GUIListPanel.h port/Source/GUI/GUIListPanel.h
+--- original/Source/GUI/GUIListPanel.h	2026-09-24 10:48:58
++++ port/Source/GUI/GUIListPanel.h	2026-09-25 19:51:20
+@@ -43,6 +43,8 @@
+ 			int m_Height = 0;
+ 			// An x offset to apply to the item (to allow nesting)
+ 			int m_OffsetX = 0;
++			// Whether the item heads a section of the list rather than being an entry in it, drawn on the skin's HeaderColorIndex where it has one
++			bool m_IsHeader = false;
+ 
+ 			Item() {}
+ 			~Item() {
+@@ -318,6 +320,8 @@
+ 		std::vector<Item*> m_SelectedList;
+ 		unsigned long m_SelectedColorIndex;
+ 		unsigned long m_UnselectedColorIndex;
++		bool m_HasHeaderColor; //!< Whether the skin gives section headers a background of their own.
++		unsigned long m_HeaderColorIndex; //!< The background of section headers, in the alternate draw mode.
+ 
+ 		/// Build the drawing bitmap.
+ 		void BuildDrawBitmap();
 diff -ruP --exclude=*.o original/Source/GUI/GUITextPanel.cpp port/Source/GUI/GUITextPanel.cpp
 --- original/Source/GUI/GUITextPanel.cpp	2026-09-24 10:48:58
 +++ port/Source/GUI/GUITextPanel.cpp	2026-09-25 12:40:18
@@ -1165,7 +1230,7 @@ diff -ruP --exclude=*.o original/Source/Lua/LuaBindingsManagers.cpp port/Source/
  LuaBindingRegisterFunctionDefinitionForType(ManagerLuaBindings, CameraMan) {
 diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
 --- original/Source/Main.cpp	2026-09-24 10:48:58
-+++ port/Source/Main.cpp	2026-09-25 15:49:36
++++ port/Source/Main.cpp	2026-09-25 20:57:51
 @@ -1,3 +1,17 @@
 +#ifdef __EMSCRIPTEN__
 +#include <emscripten.h>
@@ -1306,7 +1371,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  	g_MenuMan.Initialize();
  
  	// Overwrite Settings.ini after all the managers are created to fully populate the file. Up until this moment Settings.ini is populated only with minimal required properties to run.
-@@ -159,6 +248,161 @@
+@@ -159,6 +248,178 @@
  /// </summary>
  /// <param name="argCount">Argument count.</param>
  /// <param name="argValue">Argument values.</param>
@@ -1434,9 +1499,13 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
 +	// The serial run does the same work every time, which makes its duration a
 +	// benchmark for the simulation code (printed on its own line; the result line
 +	// below must stay exactly as it is, since tests compare it).
++	// Each step is measured as the game loop measures a sim update, so a run with the
++	// performance stats shown (?perf-debug) records what the overlay would show.
 +	const auto simulationStart = std::chrono::steady_clock::now();
 +	for (int step = 0; step < steps; ++step) {
++		g_PerformanceMan.NewPerformanceSample();
 +		g_TimerMan.ForceOneSimUpdate();
++		g_PerformanceMan.StartPerformanceMeasurement(PerformanceMan::SimTotal);
 +		g_LuaMan.Update();
 +		g_FrameMan.Update();
 +		g_MovableMan.CompleteQueuedMOIDDrawings();
@@ -1447,6 +1516,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
 +		g_LuaMan.ClearScriptTimings();
 +		g_MovableMan.Update();
 +		g_ActivityMan.LateUpdateGlobalScripts();
++		g_PerformanceMan.StopPerformanceMeasurement(PerformanceMan::SimTotal);
 +	}
 +
 +	// MOIDs are rebuilt on a pool thread when that phase is left parallel, and the
@@ -1456,6 +1526,18 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
 +	g_ThreadMan.GetBackgroundThreadPool().wait_for_tasks();
 +	const double simulationMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - simulationStart).count();
 +	std::printf("Simulation time: %d steps in %.0f ms, %.2f ms per step\n", steps, simulationMs, simulationMs / steps);
++#ifdef __EMSCRIPTEN__
++	// What the overlay's counters recorded over the last ten steps, and its script timings
++	// in the last one. Hidden, it measures only the total and times no script.
++	long long scriptMicroseconds = 0;
++	int scriptCalls = 0;
++	for (const auto& [path, timing]: g_LuaMan.GetScriptTimings()) {
++		scriptMicroseconds += timing.m_Time;
++		scriptCalls += timing.m_CallCount;
++	}
++	std::printf("Performance counters (microseconds per step): %s; master state scripts: %d calls, %lld microseconds\n",
++	            g_PerformanceMan.DescribeCounterAverages().c_str(), scriptCalls, scriptMicroseconds);
++#endif
 +
 +	const unsigned long long draws = g_RandomGenerator.GetDrawCount();
 +	const unsigned long long streamHash = g_RandomGenerator.GetDrawHash();
@@ -1468,7 +1550,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  void HandleMainArgs(int argCount, char** argValue) {
  	// Discard the first argument because it's always the executable path/name
  	argCount--;
-@@ -188,6 +432,42 @@
+@@ -188,6 +449,42 @@
  				singleModuleSet = true;
  			}
  		}
@@ -1511,7 +1593,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  		if (!launchModeSet) {
  			if (!lastArg && currentArg == "-editor") {
  				g_ActivityMan.SetEditorToLaunch(argValue[++i]);
-@@ -204,9 +484,24 @@
+@@ -204,9 +501,24 @@
  /// <summary>
  /// Polls the SDL event queue and passes events to be handled by the relevant managers.
  /// </summary>
@@ -1536,7 +1618,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  		switch (sdlEvent.type) {
  			case SDL_EVENT_QUIT :
  				System::SetQuit(true);
-@@ -245,6 +540,9 @@
+@@ -245,6 +557,9 @@
  /// Game menus loop.
  /// </summary>
  void RunMenuLoop() {
@@ -1546,7 +1628,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  	g_MenuMan.SetIsInMenuScreen(true);
  	g_UInputMan.DisableKeys(false);
  	g_UInputMan.TrapMousePos(false);
-@@ -261,6 +559,11 @@
+@@ -261,6 +576,11 @@
  		g_AudioMan.Update();
  		g_MusicMan.Update();
  
@@ -1558,7 +1640,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  		if (g_WindowMan.ResolutionChanged()) {
  			g_MenuMan.Reinitialize();
  			g_ConsoleMan.Destroy();
-@@ -270,18 +573,21 @@
+@@ -270,18 +590,21 @@
  		}
  
  		if (g_MenuMan.Update()) {
@@ -1582,7 +1664,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  	}
  
  	g_MenuMan.SetIsInMenuScreen(false);
-@@ -314,44 +620,47 @@
+@@ -314,45 +637,55 @@
  	long long drawTotalTime = 0;
  
  	while (!System::IsSetToQuit()) {
@@ -1636,10 +1718,18 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  			g_LuaMan.ClearScriptTimings();
 -			g_MovableMan.Update();
 +			BrowserStage("g_MovableMan.Update();"); g_MovableMan.Update();
++#ifdef __EMSCRIPTEN__
++			// Only the performance overlay lists the script timings, and scripts are timed only while it measures.
++			if (g_PerformanceMan.IsMeasuringCounters()) {
++				g_PerformanceMan.UpdateSortedScriptTimings(g_LuaMan.GetScriptTimings());
++			}
++#else
  			g_PerformanceMan.UpdateSortedScriptTimings(g_LuaMan.GetScriptTimings());
++#endif
  
  			g_AudioMan.Update();
-@@ -364,37 +673,50 @@
+ 			g_MusicMan.Update();
+@@ -364,37 +697,50 @@
  			g_PresetMan.ClearReloadEntityPresetCalledThisUpdate();
  
  			g_PerformanceMan.StopPerformanceMeasurement(PerformanceMan::SimTotal);
@@ -1697,7 +1787,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  
  		drawTotalTime = g_TimerMan.GetAbsoluteTime() - drawStartTime;
  		g_PerformanceMan.UpdateMSPF(updateTotalTime, drawTotalTime);
-@@ -413,6 +735,10 @@
+@@ -413,6 +759,10 @@
  /// Implementation of the main function.
  /// </summary>
  int main(int argc, char** argv) {
@@ -1708,7 +1798,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  	install_allegro(SYSTEM_NONE, &errno, std::atexit);
  	loadpng_init();
  
-@@ -439,12 +765,59 @@
+@@ -439,12 +789,59 @@
  	System::Initialize(argv[0]);
  	SeedRNG();
  
@@ -1768,7 +1858,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  	if (!System::IsInExternalModuleValidationMode()) {
  		// Load the different input device icons. This can't be done during UInputMan::Create() because the icon presets don't exist so we need to do this after modules are loaded.
  		g_UInputMan.LoadDeviceIcons();
-@@ -468,13 +841,39 @@
+@@ -468,13 +865,42 @@
  		RunGameLoop();
  	}
  
@@ -1785,6 +1875,9 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
 +	// A page cannot close its own tab, so quitting returns to the page's start
 +	// screen (index.html reloads it). Anything a save just wrote is persisted to
 +	// IndexedDB first; the native teardown is skipped, since the reload frees it all.
++	// Files scripts left open are closed as that teardown would (LuaMan::Destroy):
++	// IndexedDB takes a file only once it is closed.
++	g_LuaMan.FileCloseAll();
 +	BrowserReturnToStartScreen();
 +	emscripten_force_exit(EXIT_SUCCESS);
 +#endif
@@ -2220,23 +2313,104 @@ diff -ruP --exclude=*.o original/Source/Managers/AudioMan.h port/Source/Managers
  	private:
 diff -ruP --exclude=*.o original/Source/Managers/FrameMan.cpp port/Source/Managers/FrameMan.cpp
 --- original/Source/Managers/FrameMan.cpp	2026-09-24 10:48:58
-+++ port/Source/Managers/FrameMan.cpp	2026-09-24 09:47:02
-@@ -178,7 +178,14 @@
++++ port/Source/Managers/FrameMan.cpp	2026-09-25 15:54:55
+@@ -34,8 +34,66 @@
+ 
+ #include <array>
+ 
++#ifdef __EMSCRIPTEN__
++#include "ThreadMan.h"
++#include <emscripten.h>
++#include <atomic>
++#include <chrono>
++#include <cstdint>
++#include <cstdio>
++#include <vector>
++#endif
++
+ using namespace RTE;
+ 
++#ifdef __EMSCRIPTEN__
++namespace {
++	// Each preset transparency table best-fits 65,280 colour pairs against the
++	// palette, and building the 21 of them one after another took most of a second
++	// of every start. Each is a pure function of the palette that writes only its
++	// own table, so the priority pool's workers and this thread build them
++	// together, each taking the next table from one counter until none is left.
++	// Only this thread yields to the browser, between its rows. A table's bytes do
++	// not depend on which thread built it.
++	void BrowserCreateTransTables(const std::vector<std::pair<COLOR_MAP*, int>>& tables, const RGB* palette) {
++		std::atomic<size_t> nextTable = 0;
++		const auto createTables = [&tables, palette, &nextTable](void (*rowCallback)(int)) {
++			for (size_t table = nextTable++; table < tables.size(); table = nextTable++) {
++				const auto& [colorTable, blendAmount] = tables[table];
++				create_trans_table(colorTable, palette, blendAmount, blendAmount, blendAmount, rowCallback);
++			}
++		};
++		BS::thread_pool& threadPool = g_ThreadMan.GetPriorityThreadPool();
++		BS::multi_future<void> workerTables;
++		for (BS::concurrency_t worker = 0; worker < threadPool.get_thread_count(); ++worker) {
++			workerTables.push_back(threadPool.submit([&createTables] { createTables(nullptr); }));
++		}
++		createTables([](int) { BrowserCooperativeYield(); });
++		workerTables.wait();
++	}
++
++	// Under ?perf-debug, how long the preset transparency tables took to build, and
++	// a hash of their bytes (64-bit FNV-1a, in preset order), which must not depend
++	// on how they were built.
++	void BrowserReportPresetColorTables(const std::vector<std::pair<COLOR_MAP*, int>>& tables, std::chrono::steady_clock::time_point buildStart) {
++		static const bool enabled = MAIN_THREAD_EM_ASM_INT({ return Module['perfDiagnostics'] === true; });
++		if (!enabled) {
++			return;
++		}
++		const double milliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
++		uint64_t hash = 14695981039346656037ULL;
++		for (const auto& [colorTable, blendAmount]: tables) {
++			for (const auto& row: colorTable->data) {
++				for (unsigned char entry: row) {
++					hash = (hash ^ entry) * 1099511628211ULL;
++				}
++			}
++		}
++		std::fprintf(stderr, "Browser colour tables: %zu in %.0f ms, hash %016llx\n", tables.size(), milliseconds, static_cast<unsigned long long>(hash));
++	}
++} // namespace
++#endif
++
+ void BitmapDeleter::operator()(BITMAP* bitmap) const { destroy_bitmap(bitmap); }
+ void SurfaceDeleter::operator()(SDL_Surface* surface) const { SDL_DestroySurface(surface); }
+ 
+@@ -172,15 +230,28 @@
+ 
+ 	// Create transparency color tables. Tables for other blend modes will be created on demand.
+ 	int transparencyPresetCount = BlendAmountLimits::MaxBlend / c_BlendAmountStep;
++#ifdef __EMSCRIPTEN__
++	const std::chrono::steady_clock::time_point buildStart = std::chrono::steady_clock::now();
++	// Every map entry is made here, before any table is built on another thread.
++	std::vector<std::pair<COLOR_MAP*, int>> presetTables;
++#endif
+ 	for (int index = 0; index <= transparencyPresetCount; ++index) {
+ 		int presetBlendAmount = index * c_BlendAmountStep;
+ 		std::array<int, 4> colorChannelBlendAmounts = {presetBlendAmount, presetBlendAmount, presetBlendAmount, BlendAmountLimits::MinBlend};
  		int adjustedBlendAmount = 255 - (static_cast<int>(255.0F * (1.0F / static_cast<float>(transparencyPresetCount) * static_cast<float>(index))));
  
  		m_ColorTables.at(DrawBlendMode::BlendTransparency).try_emplace(colorChannelBlendAmounts);
 +#ifdef __EMSCRIPTEN__
-+		// Each table best-fits 65,536 colour pairs against the palette; all of them
-+		// together froze the page for most of a second at startup. The per-row
-+		// progress callback lets the browser in between.
-+		create_trans_table(&m_ColorTables[DrawBlendMode::BlendTransparency].at(colorChannelBlendAmounts).first, m_DefaultPalette, adjustedBlendAmount, adjustedBlendAmount, adjustedBlendAmount, [](int) { BrowserCooperativeYield(); });
++		presetTables.emplace_back(&m_ColorTables[DrawBlendMode::BlendTransparency].at(colorChannelBlendAmounts).first, adjustedBlendAmount);
 +#else
  		create_trans_table(&m_ColorTables[DrawBlendMode::BlendTransparency].at(colorChannelBlendAmounts).first, m_DefaultPalette, adjustedBlendAmount, adjustedBlendAmount, adjustedBlendAmount, nullptr);
 +#endif
  		m_ColorTables[DrawBlendMode::BlendTransparency].at(colorChannelBlendAmounts).second = -1;
  	}
++#ifdef __EMSCRIPTEN__
++	BrowserCreateTransTables(presetTables, m_DefaultPalette);
++	BrowserReportPresetColorTables(presetTables, buildStart);
++#endif
  }
-@@ -509,7 +516,10 @@
+ 
+ void FrameMan::Destroy() {
+@@ -509,7 +580,10 @@
  }
  
  int FrameMan::SaveBitmap(SaveBitmapMode modeToSave, const std::string& nameBase, BITMAP* bitmapToSave) {
@@ -2248,7 +2422,7 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.cpp port/Source/Manage
  		return 0;
  	}
  	if (nameBase.empty() || nameBase.size() <= 0) {
-@@ -545,18 +555,21 @@
+@@ -545,18 +619,21 @@
  			break;
  		case ScreenDump:
  			if (m_ScreenDumpBuffer) {
@@ -2272,7 +2446,7 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.cpp port/Source/Manage
  				};
  				std::thread saveThread(saveScreenDump, saveSurface);
  				saveThread.detach();
-@@ -569,36 +582,47 @@
+@@ -569,36 +646,47 @@
  			if (!m_WorldDumpBuffer || (m_WorldDumpBuffer->w != g_SceneMan.GetSceneWidth() || m_WorldDumpBuffer->h != g_SceneMan.GetSceneHeight())) {
  				m_WorldDumpBuffer = std::unique_ptr<BITMAP, BitmapDeleter>(create_bitmap_ex(c_BPP, g_SceneMan.GetSceneWidth(), g_SceneMan.GetSceneHeight()));
  			}
@@ -2338,7 +2512,7 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.cpp port/Source/Manage
  			}
  			break;
  		default:
-@@ -613,38 +637,43 @@
+@@ -613,38 +701,43 @@
  	}
  }
  
@@ -2402,7 +2576,7 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.cpp port/Source/Manage
  }
  
  int FrameMan::SharedDrawLine(BITMAP* bitmap, const Vector& start, const Vector& end, int color, int altColor, int skip, int skipStart, bool shortestWrap, bool drawDot, BITMAP* dot) const {
-@@ -807,6 +836,74 @@
+@@ -807,6 +900,74 @@
  	}
  }
  
@@ -2477,7 +2651,7 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.cpp port/Source/Manage
  void FrameMan::Draw() {
  	ZoneScopedN("Draw");
  	TracyGpuZone("FrameMan::Draw");
-@@ -828,63 +925,13 @@
+@@ -828,63 +989,13 @@
  	std::list<PostEffect> screenRelativeEffects;
  	std::list<Box> screenRelativeGlowBoxes;
  
@@ -2542,7 +2716,7 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.cpp port/Source/Manage
  		// The position of the current draw screen on the backbuffer
  		Vector screenOffset;
  
-@@ -893,12 +940,9 @@
+@@ -893,12 +1004,9 @@
  			UpdateScreenOffsetForSplitScreen(playerScreen, screenOffset);
  		}
  
@@ -2555,7 +2729,7 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.cpp port/Source/Manage
  		if (screenCount > 1) {
  			m_BackBuffer->Begin(false);
  			DrawTextureRec(m_PlayerScreen->GetColorTexture(), {0, 0, static_cast<float>(m_PlayerScreen8->w), -static_cast<float>(m_PlayerScreen8->h)}, {screenOffset.m_X, screenOffset.m_Y}, {255, 255, 255, 255});
-@@ -907,8 +951,6 @@
+@@ -907,8 +1015,6 @@
  		g_PostProcessMan.AdjustEffectsPosToPlayerScreen(playerScreen, drawScreen, screenOffset, screenRelativeEffects, screenRelativeGlowBoxes);
  	}
  
@@ -2564,7 +2738,7 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.cpp port/Source/Manage
  
  	// Draw separating lines for split-screens
  	if (m_HSplit) {
-@@ -936,6 +978,8 @@
+@@ -936,6 +1042,8 @@
  		g_PostProcessMan.PostProcess();
  	}
  
@@ -2573,7 +2747,7 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.cpp port/Source/Manage
  	// Draw the performance stats and console on top of everything.
  	g_PerformanceMan.Draw(m_BackBuffer32.get());
  	g_ConsoleMan.Draw(m_BackBuffer32.get());
-@@ -1052,7 +1096,12 @@
+@@ -1052,7 +1160,12 @@
  			hline(m_WorldDumpBuffer.get(), 0, i, worldBitmapWidth - 1, lineColor);
  		}
  	} else {
@@ -2637,7 +2811,7 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.h port/Source/Managers
  		/// Shared method for drawing lines to avoid duplicate code. Will by called by either DrawLine() or DrawDotLine().
 diff -ruP --exclude=*.o original/Source/Managers/LuaMan.cpp port/Source/Managers/LuaMan.cpp
 --- original/Source/Managers/LuaMan.cpp	2026-09-24 10:48:58
-+++ port/Source/Managers/LuaMan.cpp	2026-09-25 15:49:36
++++ port/Source/Managers/LuaMan.cpp	2026-09-25 20:57:51
 @@ -5,6 +5,11 @@
  #include "ThreadMan.h"
  #include "System.h"
@@ -2794,7 +2968,62 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.cpp port/Source/Managers
  		luaState.Initialize();
  	}
  }
-@@ -1285,6 +1377,22 @@
+@@ -625,7 +717,16 @@
+ 		timing = &m_ScriptTimings[path];
+ 	}
+ 
++#ifdef __EMSCRIPTEN__
++	// Every clock read is a call out to JavaScript. Only the master state's timings are kept, and only the performance overlay shows them, so the clock
++	// is read only for those and only while the overlay measures. The entry is still made, so the serial simulation harness allocates as it did: entries
++	// come from the heap Lua allocates from too, and a script's table keyed by objects iterates in the order of their addresses. (The live game loop,
++	// which skips sorting the timings while the overlay is hidden, never repeated itself anyway: how many sim updates a frame runs follows real time.)
++	const bool timed = timing && g_PerformanceMan.IsMeasuringCounters();
++	std::chrono::steady_clock::time_point begin = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
++#else
+ 	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
++#endif
+ 	{
+ 		ZoneScoped;
+ 		ZoneName(path.c_str(), path.length());
+@@ -638,7 +739,11 @@
+ 			status = -1;
+ 		}
+ 	}
++#ifdef __EMSCRIPTEN__
++	std::chrono::steady_clock::time_point end = timed ? std::chrono::steady_clock::now() : begin;
++#else
+ 	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
++#endif
+ 
+ 	if (timing) {
+ 		timing->m_Time += std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+@@ -697,7 +802,13 @@
+ 	}
+ 
+ 	const std::string& path = functionObject->GetFilePath();
++#ifdef __EMSCRIPTEN__
++	// As in RunScriptFunctionObject: the clock is read only for timings that are kept and shown.
++	const bool timed = &g_LuaMan.GetMasterScriptState() == this && g_PerformanceMan.IsMeasuringCounters();
++	std::chrono::steady_clock::time_point begin = timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
++#else
+ 	std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
++#endif
+ 	{
+ 		ZoneScoped;
+ 		ZoneName(path.c_str(), path.length());
+@@ -713,7 +824,11 @@
+ 			lua_pop(m_State, 1);
+ 		}
+ 	}
++#ifdef __EMSCRIPTEN__
++	std::chrono::steady_clock::time_point end = timed ? std::chrono::steady_clock::now() : begin;
++#else
+ 	std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
++#endif
+ 
+ 	// only track time in non-MT scripts, for now
+ 	if (&g_LuaMan.GetMasterScriptState() == this) {
+@@ -1285,6 +1400,22 @@
  
  void LuaMan::StartAsyncGarbageCollection() {
  	ZoneScoped;
@@ -3133,7 +3362,7 @@ Only in original/Source/Managers: NetworkServer.cpp
 Only in original/Source/Managers: NetworkServer.h
 diff -ruP --exclude=*.o original/Source/Managers/PerformanceMan.cpp port/Source/Managers/PerformanceMan.cpp
 --- original/Source/Managers/PerformanceMan.cpp	2026-09-24 10:48:59
-+++ port/Source/Managers/PerformanceMan.cpp	2026-09-24 13:20:33
++++ port/Source/Managers/PerformanceMan.cpp	2026-09-25 15:54:26
 @@ -1,5 +1,8 @@
  #include "PerformanceMan.h"
  #include "MovableMan.h"
@@ -3143,7 +3372,17 @@ diff -ruP --exclude=*.o original/Source/Managers/PerformanceMan.cpp port/Source/
  #include "FrameMan.h"
  #include "AudioMan.h"
  
-@@ -41,6 +44,13 @@
+@@ -26,6 +29,9 @@
+ void PerformanceMan::Clear() {
+ 	m_ShowPerfStats = false;
+ 	m_AdvancedPerfStats = true;
++#ifdef __EMSCRIPTEN__
++	m_MeasureCounters = false;
++#endif
+ 	m_Sample = 0;
+ 	m_SimUpdateTimer = nullptr;
+ 	m_MSPSUs.clear();
+@@ -41,6 +47,13 @@
  
  void PerformanceMan::Initialize() {
  	m_SimUpdateTimer = std::make_unique<Timer>();
@@ -3157,6 +3396,93 @@ diff -ruP --exclude=*.o original/Source/Managers/PerformanceMan.cpp port/Source/
  
  	for (int counter = 0; counter < PerformanceCounters::PerfCounterCount; ++counter) {
  		for (int i = 0; i < c_MaxSamples; ++i) {
+@@ -51,10 +64,22 @@
+ }
+ 
+ void PerformanceMan::StartPerformanceMeasurement(PerformanceCounters counter) {
++#ifdef __EMSCRIPTEN__
++	// Every clock read is a call out to JavaScript, and the engine measures around every object and attachable it updates, for stats only the overlay
++	// shows. While it is hidden, only the total is measured: the overlay's percentages are of it.
++	if (counter != PerformanceCounters::SimTotal && !IsMeasuringCounters()) {
++		return;
++	}
++#endif
+ 	s_PerfMeasureStart[counter] = g_TimerMan.GetAbsoluteTime();
+ }
+ 
+ void PerformanceMan::StopPerformanceMeasurement(PerformanceCounters counter) {
++#ifdef __EMSCRIPTEN__
++	if (counter != PerformanceCounters::SimTotal && !IsMeasuringCounters()) {
++		return;
++	}
++#endif
+ 	s_PerfMeasureStop[counter] = g_TimerMan.GetAbsoluteTime();
+ 	AddPerformanceSample(counter, s_PerfMeasureStop[counter] - s_PerfMeasureStart[counter]);
+ }
+@@ -69,6 +94,16 @@
+ 		m_PerfData[counter][m_Sample] = 0;
+ 		m_PerfPercentages[counter][m_Sample] = 0;
+ 	}
++
++#ifdef __EMSCRIPTEN__
++	// Decided once per sim update, before any of it runs. The overlay can be switched on in the middle of one (RAlt+P, or a script setting
++	// PerformanceMan.ShowPerformanceStats), and a measurement whose start was skipped but whose stop was not would add the time since an older start.
++	m_MeasureCounters = m_ShowPerfStats;
++	// The script list is not updated while the overlay is hidden (RunGameLoop), so it would be stale when the overlay is next shown.
++	if (!m_ShowPerfStats && !m_SortedScriptTimings.empty()) {
++		m_SortedScriptTimings.clear();
++	}
++#endif
+ }
+ 
+ void PerformanceMan::CalculateSamplePercentages() {
+@@ -90,6 +125,16 @@
+ 	}
+ 	return totalPerformanceMeasurement / c_Average;
+ }
++
++#ifdef __EMSCRIPTEN__
++std::string PerformanceMan::DescribeCounterAverages() const {
++	std::string description;
++	for (int counter = 0; counter < PerformanceCounters::PerfCounterCount; ++counter) {
++		description += (counter == 0 ? "" : ", ") + m_PerfCounterNames[counter] + " " + std::to_string(GetPerformanceCounterAverage(static_cast<PerformanceCounters>(counter)));
++	}
++	return description;
++}
++#endif
+ 
+ void PerformanceMan::CalculateTimeAverage(std::deque<float>& timeMeasurements, float& avgResult, float newTimeMeasurement) const {
+ 	timeMeasurements.emplace_back(newTimeMeasurement);
+diff -ruP --exclude=*.o original/Source/Managers/PerformanceMan.h port/Source/Managers/PerformanceMan.h
+--- original/Source/Managers/PerformanceMan.h	2026-09-24 10:48:59
++++ port/Source/Managers/PerformanceMan.h	2026-09-25 15:54:26
+@@ -80,6 +80,16 @@
+ 		/// Gets the average of the MSPF reading buffer, calculated each frame.
+ 		/// @return The average value of the MSPF reading buffer.
+ 		float GetMSPFAverage() const { return m_MSPFAverage; }
++
++#ifdef __EMSCRIPTEN__
++		/// Tells whether the current sim update is being measured for the performance stats, which it is only while they are shown. Set once per sim update by NewPerformanceSample().
++		/// @return Whether the current sim update is being measured.
++		bool IsMeasuringCounters() const { return m_MeasureCounters.load(std::memory_order_relaxed); }
++
++		/// Lists every performance counter's average over the last few samples, as the performance stats show them, in microseconds. For the simulation harness.
++		/// @return The counters' names and averages, comma separated.
++		std::string DescribeCounterAverages() const;
++#endif
+ #pragma endregion
+ 
+ #pragma region Performance Counter Handling
+@@ -148,6 +158,9 @@
+ 
+ 		bool m_ShowPerfStats; //!< Whether to show performance stats on screen or not.
+ 		bool m_AdvancedPerfStats; //!< Whether to show performance graphs on screen or not.
++#ifdef __EMSCRIPTEN__
++		std::atomic_bool m_MeasureCounters; //!< Whether the current sim update is being measured: m_ShowPerfStats, taken at the start of the update.
++#endif
+ 
+ 		int m_Sample; //!< Sample counter.
+ 
 diff -ruP --exclude=*.o original/Source/Managers/PostProcessMan.cpp port/Source/Managers/PostProcessMan.cpp
 --- original/Source/Managers/PostProcessMan.cpp	2026-09-24 10:48:59
 +++ port/Source/Managers/PostProcessMan.cpp	2026-09-20 22:47:14
@@ -3721,8 +4047,8 @@ diff -ruP --exclude=*.o original/Source/Managers/ThreadMan.h port/Source/Manager
  } // namespace RTE
 diff -ruP --exclude=*.o original/Source/Managers/TimerMan.cpp port/Source/Managers/TimerMan.cpp
 --- original/Source/Managers/TimerMan.cpp	2026-09-24 10:48:59
-+++ port/Source/Managers/TimerMan.cpp	2026-09-24 06:44:42
-@@ -3,6 +3,7 @@
++++ port/Source/Managers/TimerMan.cpp	2026-09-25 15:54:26
+@@ -3,10 +3,15 @@
  #include "Constants.h"
  #include "PerformanceMan.h"
  #include "SettingsMan.h"
@@ -3730,7 +4056,29 @@ diff -ruP --exclude=*.o original/Source/Managers/TimerMan.cpp port/Source/Manage
  
  #include <algorithm>
  #include <limits>
-@@ -79,6 +80,16 @@
+ 
++#ifdef __EMSCRIPTEN__
++#include <emscripten.h>
++#endif
++
+ using namespace RTE;
+ 
+ void TimerMan::Clear() {
+@@ -37,7 +42,13 @@
+ }
+ 
+ long long TimerMan::GetAbsoluteTime() const {
++#ifdef __EMSCRIPTEN__
++	// The same clock as steady_clock, from the same epoch (performance.timeOrigin + performance.now()), read without steady_clock's detour through
++	// WASI's clock_time_get, which converts its arguments and returns the time through a BigInt.
++	return static_cast<long long>(emscripten_get_now() * 1000.0);
++#else
+ 	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
++#endif
+ }
+ 
+ float TimerMan::GetRealToSimCap() const {
+@@ -79,6 +90,16 @@
  void TimerMan::Update() {
  	long long prevTime = m_RealTimeTicks;
  	m_RealTimeTicks = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - m_StartTime).count();
@@ -3776,8 +4124,8 @@ diff -ruP --exclude=*.o original/Source/Managers/TimerMan.h port/Source/Managers
  		std::chrono::steady_clock::time_point m_StartTime; //!< The point in real time when the simulation (re)started.
 diff -ruP --exclude=*.o original/Source/Managers/UInputMan.cpp port/Source/Managers/UInputMan.cpp
 --- original/Source/Managers/UInputMan.cpp	2026-09-24 10:48:59
-+++ port/Source/Managers/UInputMan.cpp	2026-09-25 00:50:13
-@@ -35,7 +35,6 @@
++++ port/Source/Managers/UInputMan.cpp	2026-09-25 20:47:36
+@@ -35,13 +35,13 @@
  	m_SkipHandlingSpecialInput = false;
  	m_TextInput.clear();
  	m_NumJoysticks = 0;
@@ -3785,7 +4133,62 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.cpp port/Source/Manag
  	m_MouseSensitivity = 0.6F;
  	m_TrapMousePos = false;
  	m_PlayerScreenMouseBounds = {0, 0, 0, 0};
-@@ -912,6 +911,24 @@
+ 	m_MouseTrapRadius = 350;
+ 	m_LastDeviceWhichControlledGUICursor = InputDevice::DEVICE_KEYB_ONLY;
+ 	m_DisableKeyboard = false;
++	m_LeftAltDown = false;
+ 	m_DisableMouseMoving = false;
+ 	m_PrepareToEnableMouseMoving = false;
+ 
+@@ -304,7 +304,16 @@
+ 		m_PrepareToEnableMouseMoving = false;
+ 	} else {
+ 		SDL_SetWindowRelativeMouseMode(g_WindowMan.GetWindow(), static_cast<bool>(m_TrapMousePos));
++#ifdef __EMSCRIPTEN__
++		// Motion is taken again at once. Natively it waits until the pointer is back inside the window, so that a click on the title bar
++		// does not drag the window about; a page has no title bar and cannot move the pointer. And the wait could last forever: motion is
++		// ignored while it lasts, and in play the pointer is locked and moved relatively, so the position it waits on can be anywhere,
++		// outside the window too, where it stays. Coming back from another tab or app then left the aim frozen while clicks still worked.
++		m_DisableMouseMoving = false;
++		m_PrepareToEnableMouseMoving = false;
++#else
+ 		m_PrepareToEnableMouseMoving = true;
++#endif
+ 	}
+ }
+ bool UInputMan::CheckMultiMouseKeyboardEnabled(std::optional<std::reference_wrapper<const std::vector<int>>> players) {
+@@ -449,6 +458,14 @@
+ 	}
+ }
+ 
++void UInputMan::UpdateRightMouseButton(Mouse& mouse) const {
++	const bool held = mouse.rightButtonDown || m_LeftAltDown;
++	if (held != mouse.state[MouseButtons::MOUSE_RIGHT]) {
++		mouse.state[MouseButtons::MOUSE_RIGHT] = held;
++		mouse.change[MouseButtons::MOUSE_RIGHT] = true;
++	}
++}
++
+ int UInputMan::MouseWheelMovedByPlayer(int player) const {
+ 	if (player == Players::NoPlayer || player < Players::PlayerOne || player >= Players::MaxPlayerCount || !m_EnableMultiMouseKeyboard) {
+ 		return m_MouseStates.at(0).wheelChange;
+@@ -858,6 +875,15 @@
+ 				m_KeyboardStates[0].keyStates[inputEvent.key.scancode] = inputEvent.key.down;
+ 			}
+ 
++			// Left Alt is a second right mouse button: holding it opens the pie menu as holding the button does (specs/controls.md). A held key's
++			// repeats are not presses.
++			if (inputEvent.key.scancode == SDL_SCANCODE_LALT && !inputEvent.key.repeat) {
++				m_LeftAltDown = inputEvent.key.down;
++				for (auto& [mouseID, mouse]: m_MouseStates) {
++					UpdateRightMouseButton(mouse);
++				}
++			}
++
+ 			break;
+ 		}
+ 		case SDL_EVENT_KEYBOARD_REMOVED: {
+@@ -912,6 +938,24 @@
  			m_MouseStates[0].position = {inputEvent.motion.x, inputEvent.motion.y};
  			m_MouseStates[0].relativeMotion += {inputEvent.motion.xrel, inputEvent.motion.yrel};
  
@@ -3810,7 +4213,24 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.cpp port/Source/Manag
  			if (g_WindowMan.FullyCoversAllDisplays()) {
  				int windowPosX = 0;
  				int windowPosY = 0;
-@@ -1071,6 +1088,14 @@
+@@ -929,6 +973,16 @@
+ 			}
+ 			Mouse& mouse = m_MouseStates[inputEvent.motion.which];
+ 			mouse.id = inputEvent.button.which;
++			if (inputEvent.button.button == SDL_BUTTON_RIGHT) {
++				// Left Alt holds the right button too.
++				mouse.rightButtonDown = inputEvent.button.down;
++				UpdateRightMouseButton(mouse);
++				if (inputEvent.button.which != 0) {
++					m_MouseStates[0].rightButtonDown = inputEvent.button.down;
++					UpdateRightMouseButton(m_MouseStates[0]);
++				}
++				break;
++			}
+ 			mouse.change[inputEvent.button.button] = inputEvent.button.down != mouse.state[inputEvent.button.button];
+ 			mouse.state[inputEvent.button.button] = inputEvent.button.down;
+ 			if (inputEvent.button.which != 0) {
+@@ -1071,6 +1125,14 @@
  			g_ActivityMan.PauseActivity(true, FlagShiftState());
  			return;
  		}
@@ -3827,7 +4247,7 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.cpp port/Source/Manag
  			g_ActivityMan.SetRestartActivity((FlagRAltState() && KeyPressed(SDLK_R)) || AnyBackPress());
 diff -ruP --exclude=*.o original/Source/Managers/UInputMan.h port/Source/Managers/UInputMan.h
 --- original/Source/Managers/UInputMan.h	2026-09-24 10:48:59
-+++ port/Source/Managers/UInputMan.h	2026-09-24 04:48:09
++++ port/Source/Managers/UInputMan.h	2026-09-25 20:05:17
 @@ -170,41 +170,62 @@
  		/// @return Whether any back buttons have been pressed at all since last frame.
  		bool AnyBackPress();
@@ -3900,7 +4320,15 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.h port/Source/Manager
  #pragma endregion
  
  #pragma region Keyboard Handling
-@@ -504,7 +525,6 @@
+@@ -485,6 +506,7 @@
+ 			SDL_MouseID id{0};
+ 			std::array<bool, MouseButtons::MAX_MOUSE_BUTTONS> state{};
+ 			std::array<bool, MouseButtons::MAX_MOUSE_BUTTONS> change{};
++			bool rightButtonDown{}; //!< Whether the right button itself is down. Left Alt holds the right button too, so its state is the two combined.
+ 			Vector position{};
+ 			Vector relativeMotion{};
+ 			Vector analogAim{};
+@@ -504,7 +526,6 @@
  
  		std::string m_TextInput; //!< Buffer for passing text input from SDL event handling to the GUI.
  
@@ -3908,7 +4336,26 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.h port/Source/Manager
  
  		std::array<InputScheme, Players::MaxPlayerCount> m_ControlScheme; //!< Which control scheme is being used by each player.
  		const Icon* m_DeviceIcons[InputDevice::DEVICE_COUNT]; //!< The Icons representing all different devices.
-@@ -586,11 +606,6 @@
+@@ -521,6 +542,7 @@
+ 		bool m_EnableMultiMouseKeyboard{true}; //!< Allow use of multiple mice and keyboards. (Enables relative mouse mode.)
+ 		bool m_PlayerMouseKeyboardKnown{false}; //!< Whether all player devices are known when multiple mouse and/or keyboards are requested.
+ 		bool m_DisableKeyboard; //!< Temporarily disable all keyboard input reading.
++		bool m_LeftAltDown; //!< Whether Left Alt is down, which holds every mouse's right button as the button itself does.
+ 		bool m_DisableMouseMoving; //!< Temporary disable for positioning the mouse, for when the game window is not in focus.
+ 
+ 		/// This is set when focus is switched back to the game window and will cause the m_DisableMouseMoving to switch to false when the mouse button is RELEASED.
+@@ -537,6 +559,10 @@
+ 		/// Player 2 will either be in the lower-left corner or the upper-right corner depending on vertical/horizontal splitting.
+ 		/// @param whichPlayer Which player's screen to constrain the mouse to. Only the player with actual control over the mouse will be affected.
+ 		void ForceMouseWithinPlayerScreen(bool force, int whichPlayer);
++
++		/// Sets a mouse's right button held while the button itself or Left Alt is down, marking the change when that starts or ends, as a press or release of the button would.
++		/// @param mouse The mouse whose right button to update.
++		void UpdateRightMouseButton(Mouse& mouse) const;
+ #pragma endregion
+ 
+ #pragma region Input State Handling
+@@ -586,11 +612,6 @@
  		/// Capture and handle special key shortcuts and combinations. This is called from Update().
  		void HandleSpecialInput();
  
@@ -3922,7 +4369,7 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.h port/Source/Manager
  		void UpdateMouseInput();
 diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Managers/WindowMan.cpp
 --- original/Source/Managers/WindowMan.cpp	2026-09-24 10:48:59
-+++ port/Source/Managers/WindowMan.cpp	2026-09-25 15:49:36
++++ port/Source/Managers/WindowMan.cpp	2026-09-25 20:57:51
 @@ -1,9 +1,11 @@
  #include "WindowMan.h"
 +#include "System.h"
@@ -4106,7 +4553,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	InitializeOpenGL();
  
  	IMGUI_CHECKVERSION();
-@@ -136,7 +280,11 @@
+@@ -136,16 +280,29 @@
  
  	ImGui::StyleColorsDark();
  	ImGui_ImplSDL3_InitForOpenGL(m_PrimaryWindow.get(), m_GLContext.get());
@@ -4118,7 +4565,12 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	ImGui_ImplOpenGL3_NewFrame();
  	ImGui_ImplSDL3_NewFrame();
  	ImGui::NewFrame();
-@@ -145,7 +293,12 @@
++#ifdef __EMSCRIPTEN__
++	// Linking ScreenBlit waits for the GPU process too; see InitializeOpenGL.
++	BrowserCooperativeYield();
++#endif
+ 
+ 	CreateBackBufferTexture();
  	m_ScreenBlitShader = std::make_unique<Shader>(g_PresetMan.GetFullModulePath("Base.rte/Shaders/ScreenBlit.vert"), g_PresetMan.GetFullModulePath("Base.rte/Shaders/ScreenBlit.frag"));
  
  	// SDL is kinda dumb about the taskbar icon so we need to poll after creating the window for it to show up, otherwise there's no icon till it starts polling in the main menu loop.
@@ -4132,7 +4584,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  
  	m_PrimaryWindowDisplayIndex = SDL_GetDisplayForWindow(m_PrimaryWindow.get());
  
-@@ -158,6 +311,15 @@
+@@ -158,6 +315,15 @@
  	SDL_AddEventWatch((SDL_EventFilter)WindowMan::HandleWindowExposedEvent, nullptr);
  }
  
@@ -4148,7 +4600,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  void WindowMan::CreatePrimaryWindow() {
  	std::string windowTitle = "Cortex Command Community Project";
  
-@@ -204,7 +366,7 @@
+@@ -204,7 +370,7 @@
  	}
  
  	SDL_SetWindowMinimumSize(m_PrimaryWindow.get(), c_MinResX, c_MinResY);
@@ -4157,7 +4609,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	SDL_SetCursor(NULL);
  
  	if (!m_Fullscreen && IsResolutionMaximized(m_ResX, m_ResY, m_ResMultiplier)) {
-@@ -221,17 +383,26 @@
+@@ -221,22 +387,38 @@
  }
  
  void WindowMan::InitializeOpenGL() {
@@ -4185,7 +4637,19 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	SDL_GL_SetSwapInterval(m_EnableVSync ? 1 : 0);
  #else
  	SDL_GL_SetSwapInterval(m_Fullscreen && m_EnableVSync ? 1 : 0);
-@@ -253,10 +424,17 @@
+ #endif
+ 
++#ifdef __EMSCRIPTEN__
++	// Creating the context and linking the first programs (rlgl's default shader
++	// next, then ImGui's and ScreenBlit in Initialize) each wait for the GPU
++	// process, and on a first start, with nothing in its shader caches, they took
++	// half a second or more with no return to the browser. Let it in between them.
++	BrowserCooperativeYield();
++#endif
+ 	rlLoadExtensions((void*)SDL_GL_GetProcAddress);
+ 	rlglInit(m_ResX, m_ResY);
+ 
+@@ -253,10 +435,17 @@
  
  void WindowMan::CreateBackBufferTexture() {
  	m_ScreenBuffer = std::make_unique<RenderTarget>(FloatRect(0, 0, m_ResX, m_ResY), FloatRect(0, 0, m_ResX, m_ResY));
@@ -4203,7 +4667,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  }
  
  int WindowMan::GetWindowResX() {
-@@ -282,7 +460,9 @@
+@@ -282,7 +471,9 @@
  	int sdlEnableVSync = m_Fullscreen && m_EnableVSync ? 1 : 0;
  #endif
  
@@ -4213,7 +4677,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  }
  
  void WindowMan::RefocusWindow() const {
-@@ -520,7 +700,7 @@
+@@ -520,7 +711,7 @@
  			SDL_MaximizeWindow(m_PrimaryWindow.get());
  		} else {
  			SDL_RestoreWindow(m_PrimaryWindow.get());
@@ -4222,7 +4686,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  		}
  		SDL_SetWindowSize(m_PrimaryWindow.get(), newResX * newResMultiplier, newResY * newResMultiplier);
  		SDL_SetWindowBordered(m_PrimaryWindow.get(), true);
-@@ -554,6 +734,112 @@
+@@ -554,6 +745,112 @@
  	g_ConsoleMan.PrintString("SYSTEM: " + std::string(!recoveredToPreviousSettings ? "Switched to different resolution." : "Failed to switch to different resolution. Reverted to previous settings."));
  }
  
@@ -4335,7 +4799,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  void WindowMan::ToggleFullscreen() {
  	bool fullscreen = !m_Fullscreen;
  
-@@ -732,7 +1018,15 @@
+@@ -732,7 +1029,15 @@
  				break;
  			case SDL_EVENT_WINDOW_RESIZED:
  			case SDL_WINDOW_MAXIMIZED:
@@ -4351,7 +4815,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  				break;
  			default:
  				break;
-@@ -743,7 +1037,9 @@
+@@ -743,7 +1048,9 @@
  
  void WindowMan::ClearBackbuffer(bool clearFrameMan) {
  	GL_CHECK(glBindFramebuffer(GL_FRAMEBUFFER, 0));
@@ -4361,7 +4825,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	if (clearFrameMan) {
  		g_FrameMan.ClearBackBuffer32();
  	}
-@@ -755,16 +1051,29 @@
+@@ -755,16 +1062,29 @@
  }
  
  void WindowMan::UploadFrame() {
@@ -4393,7 +4857,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  
  	m_ScreenBlitShader->Begin();
  	rlSetUniformSampler(m_ScreenBlitShader->GetUniformLocation("rteGUITexture"), m_BackBuffer32Texture);
-@@ -777,7 +1086,13 @@
+@@ -777,7 +1097,13 @@
  		DrawTextureRec(m_ScreenBuffer->GetColorTexture(), {0.0f, 0.0f, static_cast<float>(m_ResX), -static_cast<float>(m_ResY)}, {0, 0}, {255, 255, 255, 255});
  	}
  	m_ScreenBlitShader->End();
@@ -4408,7 +4872,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  
  	rlDisableColorBlend();
  	if (m_MultiDisplayWindows.empty()) {
-@@ -787,7 +1102,7 @@
+@@ -787,7 +1113,7 @@
  		rlMatrixMode(RL_MODELVIEW);
  		rlLoadIdentity();
  		GL_CHECK(glViewport(m_PrimaryWindowViewport->x, m_PrimaryWindowViewport->y, m_PrimaryWindowViewport->w, m_PrimaryWindowViewport->h));
@@ -4417,7 +4881,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  		rlDrawRenderBatchActive();
  	} else {
  		for (size_t i = 0; i < m_MultiDisplayWindows.size(); ++i) {
-@@ -801,12 +1116,30 @@
+@@ -801,12 +1127,30 @@
  			rlLoadIdentity();
  			rlOrtho(0, windowW, windowH, 0, -1.0, 1.0);
  
@@ -4449,7 +4913,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	Present();
  	TracyGpuCollect;
  	FrameMark;
-@@ -816,12 +1149,60 @@
+@@ -816,12 +1160,60 @@
  }
  
  void WindowMan::Present() {
@@ -4629,6 +5093,28 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.h port/Source/Manager
  		float m_MaxResMultiplier; //!< The maximum resolution multiplier before the game starts breaking.
  
  		bool m_Fullscreen; //!< Whether the game window is currently in fullscreen.
+diff -ruP --exclude=*.o original/Source/Menus/BuyMenuGUI.cpp port/Source/Menus/BuyMenuGUI.cpp
+--- original/Source/Menus/BuyMenuGUI.cpp	2026-09-24 10:48:59
++++ port/Source/Menus/BuyMenuGUI.cpp	2026-09-25 19:51:30
+@@ -80,8 +80,9 @@
+ 	m_ForeignCostMult = 4.0;
+ 	int moduleCount = g_PresetMan.GetTotalModuleCount();
+ 	m_aExpandedModules = new bool[moduleCount];
++	// Every module's section starts open.
+ 	for (int i = 0; i < moduleCount; ++i)
+-		m_aExpandedModules[i] = i == 0 ? true : false;
++		m_aExpandedModules[i] = true;
+ 	m_pShopList = 0;
+ 	m_pCartList = 0;
+ 	m_pCraftBox = 0;
+@@ -2047,6 +2048,7 @@
+ 					std::string name = pModule->GetFriendlyName();
+ 					transform(name.begin(), name.end(), name.begin(), ::toupper);
+ 					m_pShopList->AddItem(name, m_aExpandedModules[moduleID] ? "-" : "+", pItemBitmap, 0, moduleID);
++					m_pShopList->GetItemList()->back()->m_IsHeader = true;
+ 				}
+ 
+ 				// If the module is expanded, add all the items within it below
 diff -ruP --exclude=*.o original/Source/Menus/LoadingScreen.cpp port/Source/Menus/LoadingScreen.cpp
 --- original/Source/Menus/LoadingScreen.cpp	2026-09-24 10:48:59
 +++ port/Source/Menus/LoadingScreen.cpp	2026-09-23 21:11:33
@@ -7854,8 +8340,8 @@ diff -ruP --exclude=*.o original/Source/System/System.cpp port/Source/System/Sys
  		if (s_WorkingTree.empty()) {
 diff -ruP --exclude=*.o original/Source/System/System.h port/Source/System/System.h
 --- original/Source/System/System.h	2026-09-24 10:48:59
-+++ port/Source/System/System.h	2026-09-25 15:49:36
-@@ -7,6 +7,70 @@
++++ port/Source/System/System.h	2026-09-25 20:57:51
+@@ -7,6 +7,71 @@
  
  namespace RTE {
  
@@ -7896,7 +8382,8 @@ diff -ruP --exclude=*.o original/Source/System/System.h port/Source/System/Syste
 +
 +	/// Waits until the page has delivered every sound file, which it fetches after the
 +	/// game has started (runtime/sound-files.js), so an Activity plays with all of its
-+	/// sounds. Returns at once when they are all here, and natively.
++	/// sounds; or until the page stops waiting for the last ones, once none has arrived
++	/// for three minutes. Returns at once when they are all here, and natively.
 +	void BrowserWaitForSoundFiles();
 +
 +	/// How long ago, in milliseconds, the display refresh that started this frame
@@ -7926,7 +8413,7 @@ diff -ruP --exclude=*.o original/Source/System/System.h port/Source/System/Syste
  	/// Class for the system functionality.
  	class System {
  
-@@ -112,8 +176,55 @@
+@@ -112,8 +177,55 @@
  		/// @return Whether the program is running in module validation mode.
  		static bool IsInExternalModuleValidationMode() { return s_ExternalModuleValidation; }
  
@@ -7982,7 +8469,7 @@ diff -ruP --exclude=*.o original/Source/System/System.h port/Source/System/Syste
  #pragma endregion
  
  #pragma region Misc
-@@ -131,6 +242,9 @@
+@@ -131,6 +243,9 @@
  	private:
  		static bool s_Quit; //!< Whether the user requested program termination through GUI or the window close button.
  		static bool s_LogToCLI; //!< Bool to tell whether to print the loading log and anything specified with PrintToCLI to command-line or not.
@@ -8114,6 +8601,69 @@ diff -ruP --exclude=*.o original/external/sources/SDL3-3.2.10/src/video/SDL_vide
          alert(UTF8ToString($0) + "\n\n" + UTF8ToString($1));
      },
              title, message);
+diff -ruP --exclude=*.o original/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenevents.c port/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenevents.c
+--- original/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenevents.c	2026-09-24 10:48:59
++++ port/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenevents.c	2026-09-25 20:30:13
+@@ -272,6 +272,11 @@
+ {
+     SDL_WindowData *window_data = userData;
+     const bool isPointerLocked = window_data->has_pointer_lock;
++    /* A window in relative mode takes the pointer's movement whether the pointer is
++       locked or not. The browser drops the lock on Esc and when the page loses the
++       focus, and until a click gets it back, absolute positions would only be dropped
++       as a relative window's non-relative motion: nothing that aims would move. */
++    const bool isRelative = isPointerLocked || (window_data->window->flags & SDL_WINDOW_MOUSE_RELATIVE_MODE);
+     float mx, my;
+ 
+     // rescale (in case canvas is being scaled)
+@@ -280,7 +285,7 @@
+     xscale = window_data->window->w / client_w;
+     yscale = window_data->window->h / client_h;
+ 
+-    if (isPointerLocked) {
++    if (isRelative) {
+         mx = (float)(mouseEvent->movementX * xscale);
+         my = (float)(mouseEvent->movementY * yscale);
+     } else {
+@@ -288,7 +293,7 @@
+         my = (float)(mouseEvent->targetY * yscale);
+     }
+ 
+-    SDL_SendMouseMotion(0, window_data->window, SDL_DEFAULT_MOUSE_ID, isPointerLocked, mx, my);
++    SDL_SendMouseMotion(0, window_data->window, SDL_DEFAULT_MOUSE_ID, isRelative, mx, my);
+     return 0;
+ }
+ 
+@@ -318,8 +323,9 @@
+     SDL_assert(mouse != NULL);
+ 
+     if (eventType == EMSCRIPTEN_EVENT_MOUSEDOWN) {
+-        if (mouse->relative_mode && !window_data->has_pointer_lock) {
+-            emscripten_request_pointerlock(window_data->canvas_id, 0); // try to regrab lost pointer lock.
++        // try to regrab lost pointer lock (asked of the window too, should SDL's own relative mode lag behind it).
++        if ((mouse->relative_mode || (window_data->window->flags & SDL_WINDOW_MOUSE_RELATIVE_MODE)) && !window_data->has_pointer_lock) {
++            emscripten_request_pointerlock(window_data->canvas_id, 0);
+         }
+         sdl_button_state = true;
+     } else {
+diff -ruP --exclude=*.o original/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenmouse.c port/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenmouse.c
+--- original/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenmouse.c	2026-09-24 10:48:59
++++ port/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenmouse.c	2026-09-25 20:32:27
+@@ -180,6 +180,14 @@
+     if (enabled) {
+         window = SDL_GetMouseFocus();
+         if (!window) {
++            /* A page has one window. Relative mode is set again when the page gets the
++               keyboard focus back from another tab or app, often before the pointer is
++               over the canvas again. Failing then left the window flagged relative for
++               good while SDL's own relative mode stayed off: its motion was dropped, and
++               no click asked for the pointer lock again. */
++            window = SDL_GetKeyboardFocus();
++        }
++        if (!window) {
+             return false;
+         }
+ 
 diff -ruP --exclude=*.o original/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenopengles.c port/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenopengles.c
 --- original/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenopengles.c	2026-09-24 10:48:59
 +++ port/external/sources/SDL3-3.2.10/src/video/emscripten/SDL_emscriptenopengles.c	2026-09-20 10:43:00
@@ -8274,6 +8824,17 @@ diff -ruP --exclude=*.o original/Data/Base.rte/GUIs/PauseMenuGUI.ini port/Data/B
  [ButtonSaveOrLoadGame]
  ControlType = BUTTON
  Parent = PauseScreen
+diff -ruP --exclude=*.o original/Data/Base.rte/GUIs/Skins/DefaultSkin.ini port/Data/Base.rte/GUIs/Skins/DefaultSkin.ini
+--- original/Data/Base.rte/GUIs/Skins/DefaultSkin.ini	2026-09-24 10:48:57
++++ port/Data/Base.rte/GUIs/Skins/DefaultSkin.ini	2026-09-25 19:51:54
+@@ -70,6 +70,7 @@
+ FontSelectColor = 15
+ SelectedColorIndex = 117
+ UnselectedColorIndex = 144
++HeaderColorIndex = 161
+ TopLeft = 112,11, 2,2
+ Top = 115,11, 3,2
+ TopRight = 119,11, 2,2
 diff -ruP --exclude=*.o original/Data/Base.rte/GUIs/Skins/Menus/MainMenuSubMenuSkin.ini port/Data/Base.rte/GUIs/Skins/Menus/MainMenuSubMenuSkin.ini
 --- original/Data/Base.rte/GUIs/Skins/Menus/MainMenuSubMenuSkin.ini	2026-09-24 10:48:57
 +++ port/Data/Base.rte/GUIs/Skins/Menus/MainMenuSubMenuSkin.ini	2026-09-25 12:40:26
@@ -8286,6 +8847,72 @@ diff -ruP --exclude=*.o original/Data/Base.rte/GUIs/Skins/Menus/MainMenuSubMenuS
  Filename = SkinBlue.png
  TopLeft = 0,36, 2,2
  Top = 3,36, 3,2
+diff -ruP --exclude=*.o original/Data/Browncoats.rte/GUIs/BuyMenuSkin.ini port/Data/Browncoats.rte/GUIs/BuyMenuSkin.ini
+--- original/Data/Browncoats.rte/GUIs/BuyMenuSkin.ini	2026-09-24 10:48:58
++++ port/Data/Browncoats.rte/GUIs/BuyMenuSkin.ini	2026-09-25 19:51:54
+@@ -70,6 +70,7 @@
+ FontSelectColor = 15
+ SelectedColorIndex = 117
+ UnselectedColorIndex = 62
++HeaderColorIndex = 67
+ TopLeft = 112,11, 2,2
+ Top = 115,11, 3,2
+ TopRight = 119,11, 2,2
+diff -ruP --exclude=*.o original/Data/Dummy.rte/GUIs/BuyMenuSkin.ini port/Data/Dummy.rte/GUIs/BuyMenuSkin.ini
+--- original/Data/Dummy.rte/GUIs/BuyMenuSkin.ini	2026-09-24 10:48:58
++++ port/Data/Dummy.rte/GUIs/BuyMenuSkin.ini	2026-09-25 19:51:54
+@@ -70,6 +70,7 @@
+ FontSelectColor = 15
+ SelectedColorIndex = 117
+ UnselectedColorIndex = 83
++HeaderColorIndex = 36
+ TopLeft = 112,11, 2,2
+ Top = 115,11, 3,2
+ TopRight = 119,11, 2,2
+diff -ruP --exclude=*.o original/Data/Imperatus.rte/GUIs/BuyMenuSkin.ini port/Data/Imperatus.rte/GUIs/BuyMenuSkin.ini
+--- original/Data/Imperatus.rte/GUIs/BuyMenuSkin.ini	2026-09-24 10:48:58
++++ port/Data/Imperatus.rte/GUIs/BuyMenuSkin.ini	2026-09-25 19:51:54
+@@ -70,6 +70,7 @@
+ FontSelectColor = 15
+ SelectedColorIndex = 117
+ UnselectedColorIndex = 250
++HeaderColorIndex = 251
+ TopLeft = 112,11, 2,2
+ Top = 115,11, 3,2
+ TopRight = 119,11, 2,2
+diff -ruP --exclude=*.o original/Data/Ronin.rte/GUIs/BuyMenuSkin.ini port/Data/Ronin.rte/GUIs/BuyMenuSkin.ini
+--- original/Data/Ronin.rte/GUIs/BuyMenuSkin.ini	2026-09-24 10:48:58
++++ port/Data/Ronin.rte/GUIs/BuyMenuSkin.ini	2026-09-25 19:51:54
+@@ -70,6 +70,7 @@
+ FontSelectColor = 15
+ SelectedColorIndex = 117
+ UnselectedColorIndex = 62
++HeaderColorIndex = 67
+ TopLeft = 112,11, 2,2
+ Top = 115,11, 3,2
+ TopRight = 119,11, 2,2
+diff -ruP --exclude=*.o original/Data/Techion.rte/GUIs/BuyMenuSkin.ini port/Data/Techion.rte/GUIs/BuyMenuSkin.ini
+--- original/Data/Techion.rte/GUIs/BuyMenuSkin.ini	2026-09-24 10:48:58
++++ port/Data/Techion.rte/GUIs/BuyMenuSkin.ini	2026-09-25 19:51:54
+@@ -70,6 +70,7 @@
+ FontSelectColor = 15
+ SelectedColorIndex = 117
+ UnselectedColorIndex = 208
++HeaderColorIndex = 217
+ TopLeft = 112,11, 2,2
+ Top = 115,11, 3,2
+ TopRight = 119,11, 2,2
+diff -ruP --exclude=*.o original/Data/Uzira.rte/GUIs/BuyMenuSkin.ini port/Data/Uzira.rte/GUIs/BuyMenuSkin.ini
+--- original/Data/Uzira.rte/GUIs/BuyMenuSkin.ini	2026-09-24 10:48:58
++++ port/Data/Uzira.rte/GUIs/BuyMenuSkin.ini	2026-09-25 19:51:54
+@@ -70,6 +70,7 @@
+ FontSelectColor = 15
+ SelectedColorIndex = 117
+ UnselectedColorIndex = 249
++HeaderColorIndex = 250
+ TopLeft = 112,11, 2,2
+ Top = 115,11, 3,2
+ TopRight = 119,11, 2,2
 diff -ruP --exclude=*.o original/Data/Base.rte/Scenes/Objects/Bunkers/BunkerSystems/ActorSpawner/ActorSpawner.ini port/Data/Base.rte/Scenes/Objects/Bunkers/BunkerSystems/ActorSpawner/ActorSpawner.ini
 --- original/Data/Base.rte/Scenes/Objects/Bunkers/BunkerSystems/ActorSpawner/ActorSpawner.ini	2026-09-24 10:48:57
 +++ port/Data/Base.rte/Scenes/Objects/Bunkers/BunkerSystems/ActorSpawner/ActorSpawner.ini	2026-09-25 13:03:51

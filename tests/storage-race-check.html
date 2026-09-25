@@ -1,7 +1,7 @@
 <!doctype html><meta charset="utf-8"><title>Storage concurrency regression</title><h1>Storage concurrency regression</h1><pre id="output">Starting isolated storage instances…</pre><script src="check-report.js"></script><script src="storage_runtime.js"></script><script>
 (async()=>{const out=document.getElementById('output');try{
 const path='/CortexStorageRace-'+Date.now();const sync=(r,populate)=>new Promise((resolve,reject)=>r.FS.syncfs(populate,e=>e?reject(e):resolve()));
-const make=async()=>{const r=await StorageRuntime();r.installPersistenceJournal();r.FS.mkdir(path);r.FS.mount(r.IDBFS,{},path);await sync(r,true);return r;};
+const make=async idle=>{const r=await StorageRuntime();r.installPersistenceJournal(idle);r.FS.mkdir(path);r.FS.mount(r.IDBFS,{},path);await sync(r,true);return r;};
 const a=await make();const stale=await make();const file=path+'/scene.ini';
 a.FS.writeFile(file,'AddScene = Scene\n\tPresetName = concurrency-fixture\n');await sync(a,false);
 const before=await make();if(before.FS.readFile(file,{encoding:'utf8'})!==a.FS.readFile(file,{encoding:'utf8'}))throw Error('initial commit failed');
@@ -42,6 +42,45 @@ const automatic=await StorageRuntime();automatic.installPersistenceJournal();aut
 automatic.FS.writeFile(path+'/automatic','scheduled');
 await new Promise(resolve=>setTimeout(resolve,100));
 check(read(await make(),path+'/automatic')==='scheduled','auto persist failed');
-out.textContent='Stale-instance preservation, newer and same-timestamp writes, deletion, directory rename, remote children, failed-commit retry, atomic transaction abort, overlapping flushes and auto-persist. Isolated database: '+path+'\n';reportCheck('pass');
+// A file open for writing keeps its committed version until its last writer closes it,
+// so a save cut short never replaces the previous one. Opening it truncates it first.
+const bytes=text=>new TextEncoder().encode(text);const put=(stream,text,r=a)=>r.FS.write(stream,bytes(text),0,bytes(text).length);const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const save=path+'/QuickSave.ccsave';a.FS.writeFile(save,'previous save');await sync(a,false);
+let writer=a.FS.open(save,'w');put(writer,'new');a.FS.writeFile(path+'/other','committed');await sync(a,false);
+let fresh=await make();check(read(fresh,save)==='previous save','a file being written replaced its committed version');check(read(fresh,path+'/other')==='committed','an open file held back another');
+const copy=a.FS.dupStream(writer);a.FS.close(writer);put(copy,' save');await sync(a,false);
+check(read(await make(),save)==='previous save','a file still open through a duplicate was committed');
+a.FS.close(copy);await sync(a,false);check(read(await make(),save)==='new save','a closed file was not committed');
+a.FS.writeFile(path+'/read','unread');const reader=a.FS.open(path+'/read','r');await sync(a,false);a.FS.close(reader);
+check(read(await make(),path+'/read')==='unread','a stream open for reading held a file back');
+// A new file does not exist in IndexedDB until it is closed.
+writer=a.FS.open(path+'/new.ccsave','w');put(writer,'partial');await sync(a,false);
+check(!(await make()).FS.analyzePath(path+'/new.ccsave').exists,'a new file was committed while open');
+a.FS.close(writer);await sync(a,false);check(read(await make(),path+'/new.ccsave')==='partial','a new file was not committed on close');
+// With autoPersist, the last writer's close is what schedules the commit.
+writer=automatic.FS.open(path+'/automatic','w');put(writer,'rewritten',automatic);
+await pause(100);check(read(await make(),path+'/automatic')==='scheduled','auto persist committed an open file');
+automatic.FS.close(writer);let committed=false;for(const end=Date.now()+5000;!committed&&Date.now()<end;await pause(50))committed=read(await make(),path+'/automatic')==='rewritten';
+check(committed,'closing did not schedule a commit');
+// A file left open goes out once it has gone unwritten for the idle time (60 s in the
+// game, shortened here), unless it is a save archive, the runtime has crashed or the
+// page shows a failure.
+const script=path+'/script.txt';const idle=await make(300);idle.FS.writeFile(script,'committed');await sync(idle,false);
+writer=idle.FS.open(script,'w');put(writer,'left open',idle);const unclosed=idle.FS.open(save,'w');put(unclosed,'failed save',idle);await sync(idle,false);
+check(read(await make(),script)==='committed','a file open for writing was committed before the idle time');
+await pause(400);document.body.dataset.state='failed';
+try{await sync(idle,false);}finally{delete document.body.dataset.state;}
+check(read(await make(),script)==='committed','an open file was committed while the page showed a failure');
+await sync(idle,false);fresh=await make();check(read(fresh,script)==='left open','an idle open file was never committed');
+check(read(fresh,save)==='new save','a save archive left open was committed');
+// A writer that a failed save never closed does not hold back the next save of the file.
+const next=idle.FS.open(save,'w');put(next,'next save',idle);await sync(idle,false);
+check(read(await make(),save)==='new save','a save being written replaced its committed version');
+idle.FS.close(next);await sync(idle,false);check(read(await make(),save)==='next save','a save was held back by a writer left open before it');
+const crashed=await make(300);writer=crashed.FS.open(script,'w');put(writer,'half',crashed);
+let threw=false;try{crashed._crash();}catch(e){threw=true;}check(threw,'the runtime did not abort');
+await pause(400);await sync(crashed,false);
+check(read(await make(),script)==='left open','an aborted runtime committed a file it never closed');
+out.textContent='Stale-instance preservation, newer and same-timestamp writes, deletion, directory rename, remote children, failed-commit retry, atomic transaction abort, overlapping flushes, auto-persist, and files held back while open for writing (duplicates, new files, the idle time, save archives, a failed save, a crash). Isolated database: '+path+'\n';reportCheck('pass');
 }catch(e){out.textContent='Fixture failed: '+e+'\n';reportCheck('fail',String(e));}})();
 </script>

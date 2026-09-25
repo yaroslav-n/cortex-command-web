@@ -180,6 +180,14 @@ static bool Emscripten_SetRelativeMouseMode(bool enabled)
     if (enabled) {
         window = SDL_GetMouseFocus();
         if (!window) {
+            /* A page has one window. Relative mode is set again when the page gets the
+               keyboard focus back from another tab or app, often before the pointer is
+               over the canvas again. Failing then left the window flagged relative for
+               good while SDL's own relative mode stayed off: its motion was dropped, and
+               no click asked for the pointer lock again. */
+            window = SDL_GetKeyboardFocus();
+        }
+        if (!window) {
             return false;
         }
 
