@@ -956,6 +956,63 @@ diff -ruP --exclude=*.o original/Source/GUI/GUIInput.h port/Source/GUI/GUIInput.
  
  		int m_Player;
  
+diff -ruP --exclude=*.o original/Source/GUI/GUITextPanel.cpp port/Source/GUI/GUITextPanel.cpp
+--- original/Source/GUI/GUITextPanel.cpp	2026-09-24 10:48:58
++++ port/Source/GUI/GUITextPanel.cpp	2026-09-25 12:40:18
+@@ -21,6 +21,7 @@
+ 	m_Locked = false;
+ 	m_WidthMargin = 3;
+ 	m_HeightMargin = 0;
++	m_CentredVertically = false;
+ 
+ 	m_MaxTextLength = 0;
+ 	m_NumericOnly = false;
+@@ -36,6 +37,7 @@
+ 	m_Locked(false),
+ 	m_WidthMargin(3),
+ 	m_HeightMargin(0),
++	m_CentredVertically(false),
+ 	m_CursorX(m_CursorY = 0),
+ 	m_CursorIndex(0),
+ 	m_StartIndex(0),
+@@ -73,6 +75,8 @@
+ 
+ 	Skin->GetValue("TextBox", "WidthMargin", &m_WidthMargin);
+ 	Skin->GetValue("TextBox", "HeightMargin", &m_HeightMargin);
++	std::string alignString;
++	m_CentredVertically = Skin->GetValue("TextBox", "VAlignment", &alignString) && stricmp(alignString.c_str(), "middle") == 0;
+ 
+ 	// Convert
+ 	m_FontColor = Skin->ConvertColor(m_FontColor);
+@@ -94,7 +98,7 @@
+ 
+ 	int FontHeight = m_Font->GetFontHeight();
+ 	int wSpacer = m_WidthMargin;
+-	int hSpacer = m_HeightMargin;
++	int hSpacer = m_CentredVertically ? (m_Height - FontHeight) / 2 : m_HeightMargin;
+ 
+ 	// Clamp the cursor
+ 	m_CursorX = std::max(m_CursorX, 0);
+@@ -132,7 +136,7 @@
+ 	const int blinkInterval = 250;
+ 	bool shouldBlink = static_cast<int>(m_BlinkTimer.GetElapsedRealTimeMS()) % (blinkInterval * 2) > blinkInterval;
+ 	if (m_GotFocus && shouldBlink) {
+-		Screen->GetBitmap()->DrawRectangle(m_X + m_CursorX + 2, m_Y + hSpacer + m_CursorY + 2, 1, FontHeight - 3, m_CursorColor, true);
++		Screen->GetBitmap()->DrawRectangle(m_X + wSpacer - 1 + m_CursorX, m_Y + hSpacer + m_CursorY + 2, 1, FontHeight - 3, m_CursorColor, true);
+ 	}
+ 
+ 	// Restore normal clipping
+diff -ruP --exclude=*.o original/Source/GUI/GUITextPanel.h port/Source/GUI/GUITextPanel.h
+--- original/Source/GUI/GUITextPanel.h	2026-09-24 10:48:58
++++ port/Source/GUI/GUITextPanel.h	2026-09-25 12:40:08
+@@ -131,6 +131,7 @@
+ 		// The distance from the side and top of the text box, to the side and top of the first line of text
+ 		int m_WidthMargin;
+ 		int m_HeightMargin;
++		bool m_CentredVertically; //!< Whether the line is centred in the panel's height instead of HeightMargin from its top (the skin's VAlignment = middle).
+ 
+ 		// Cursor
+ 		int m_CursorX;
 diff -ruP --exclude=*.o original/Source/GUI/Wrappers/GUIInputWrapper.cpp port/Source/GUI/Wrappers/GUIInputWrapper.cpp
 --- original/Source/GUI/Wrappers/GUIInputWrapper.cpp	2026-09-24 10:48:58
 +++ port/Source/GUI/Wrappers/GUIInputWrapper.cpp	2026-09-21 03:15:54
@@ -7699,3 +7756,15 @@ diff -ruP --exclude=*.o original/Data/Base.rte/GUIs/PauseMenuGUI.ini port/Data/B
  [ButtonSaveOrLoadGame]
  ControlType = BUTTON
  Parent = PauseScreen
+diff -ruP --exclude=*.o original/Data/Base.rte/GUIs/Skins/Menus/MainMenuSubMenuSkin.ini port/Data/Base.rte/GUIs/Skins/Menus/MainMenuSubMenuSkin.ini
+--- original/Data/Base.rte/GUIs/Skins/Menus/MainMenuSubMenuSkin.ini	2026-09-24 10:48:57
++++ port/Data/Base.rte/GUIs/Skins/Menus/MainMenuSubMenuSkin.ini	2026-09-25 12:40:26
+@@ -231,6 +231,8 @@
+ FontColor = 0
+ FontKerning = 0
+ FontSelectColor = 0
++WidthMargin = 4
++VAlignment = middle
+ Filename = SkinBlue.png
+ TopLeft = 0,36, 2,2
+ Top = 3,36, 3,2
