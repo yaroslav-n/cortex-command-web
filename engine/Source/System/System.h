@@ -60,6 +60,17 @@ namespace RTE {
 	/// that ran none and frames that ran more than one.
 	void BrowserTakeSimUpdateStats(int& updates, int& framesWithNone, int& framesWithSeveral);
 
+	/// Stops the game at once with "OOM", as the heap does when it cannot grow
+	/// (ABORTING_MALLOC, CMakeLists.txt), for an allocation that failed without the heap
+	/// being asked to grow: near 4 GB, sbrk refuses a request that would pass the end of
+	/// the address space before it gets that far. Browser only; never returns.
+	[[noreturn]] void BrowserOutOfMemory();
+
+	/// Makes a failed operator new stop the game with BrowserOutOfMemory instead of
+	/// throwing std::bad_alloc. Out of memory, the game cannot go on, and describing the
+	/// exception needs memory too. Does nothing natively.
+	void BrowserStopOnFailedNew();
+
 
 	/// Class for the system functionality.
 	class System {

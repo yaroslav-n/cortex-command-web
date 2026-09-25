@@ -92,7 +92,10 @@ type, `what()` and the stack it was thrown from (the game is linked with
 `EXCEPTION_STACK_TRACES`); before, it said only `[object WebAssembly.Exception]`. A
 JavaScript error that kills a worker thread, such as a stack overflow, arrives as
 "Worker error:" with the worker's own stack (`runtime/thread-errors.js`); before,
-only Emscripten's one line, "worker sent an error!", without it.
+only Emscripten's one line, "worker sent an error!", without it. When memory runs
+out, the page says "The game ran out of memory." and ends the report with the heap's
+size ("Heap: 3805 MB of 4096 MB"); the first errors keep the `Heap grew to …` stacks
+and `Lua memory: …` lines that came before (see [threads](threads.md)).
 `--log` prints every check's output, each line stamped with the seconds since the
 page (for the game, since Play) started; test pages write their output to the
 console for this. The game checks press the start screen's Play Game as a player
@@ -253,6 +256,11 @@ continuity from the non-silent ratio and the engine clock instead.
 
 Memory: the `?perf-debug` line ends with the WebAssembly heap's size and how much
 of it is allocated (flat at about 800 MB through six minutes of Decision Day).
+A `Browser memory:` line printed just before it gives what the Lua states hold
+(the master, the threaded states together and the largest: under 2, 17–19 and
+under 2 MB in ten scenarios run for ten game minutes each) and how many objects,
+actors and particles there are. It is what to read when the heap climbs (see
+[Lua](lua.md)).
 `tools/reload-leak.mjs <port> <url> [loads] [play]` reloads the page in one
 tab and prints V8's heap after a forced full collection; the ArrayBuffer total
 must stay flat. `performance.memory` is no use for this: it counts garbage not

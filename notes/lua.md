@@ -190,13 +190,30 @@ direct call from the worker.
 ## Garbage collection
 
 `LuaMan::StartAsyncGarbageCollection` normally submits one `LUA_GCSTEP` per state
-to the priority pool, each under that state's mutex, followed by `LUA_GCSTOP`.
-The normal incremental GC is left enabled to catch runaway allocation between
-steps.
+to the priority pool, each under that state's mutex, followed by `LUA_GCSTOP`, as
+upstream does. So the collector runs only in those steps, once per update. The
+comment in `LuaStateWrapper::Initialize` about keeping "the normal GC on so it can
+catch any big spikes or runaway allocs" is out of date: after the first step the
+collector is stopped, and LuaJIT's `LUA_GCSTOP` stops it the same way. A script that keeps
+allocating inside one call grows its state until the call returns; in the browser,
+until the 4 GB heap runs out (see Memory).
 
 In deterministic simulation mode (`System::IsInDeterministicSimulationMode`, used
 by `-simulate-tutorial`) it collects inline instead, in state order, because
 finalizer timing on pool threads would otherwise depend on the scheduler.
+
+## Memory
+
+In the browser every state is made with `lua_newstate` and
+`LuaStateWrapper::BrowserLuaAllocate`: `luaL_newstate`'s allocator (realloc and
+free) that also counts the bytes each state holds. States normally hold 1–3 MB.
+`?perf-debug` prints the counts every two seconds (`Browser memory:`), and a state
+that passes 256 MB, and each doubling after, prints which one it is and the script
+it is running (`Lua memory: threaded state 7 holds 512 MB, running …`), which is how
+a runaway script names itself before the heap runs out. A failed allocation stops
+the game with "OOM" (`BrowserOutOfMemory`, see [threads](threads.md)) rather than
+raising "not enough memory": the heap is spent, and every script after it would fail
+the same way. The native build keeps `luaL_newstate`, as upstream does.
 
 ## Bindings: what to watch for
 

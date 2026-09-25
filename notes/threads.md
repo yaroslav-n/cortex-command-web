@@ -113,6 +113,24 @@ does, but the build uses its AudioWorklet path). Growth with `-pthread` carries 
 known performance warning from Emscripten; the initial size is large specifically
 so growth is rare during play.
 
+When the heap cannot grow, the game stops at once with "OOM" and the page says it
+ran out of memory (`-sABORTING_MALLOC=1`). Before, malloc returned null, `operator
+new` threw `std::bad_alloc`, and describing that exception for the report
+(`EXCEPTION_STACK_TRACES` demangles its type name) needed memory too: each thread
+that failed an allocation stopped inside the demangler (`RuntimeError: unreachable`
+in `itanium_demangle::OutputBuffer::grow`), and the report named neither memory
+nor what had used it. A player's report looked exactly like that, from pool
+threads running `InitializeObjectScripts`. `ABORTING_MALLOC` acts only where the
+heap fails to grow. Close to 4 GB, `sbrk` refuses a request that would pass the end
+of the address space before trying to grow, so malloc still returns null; in a test
+the engine thread then ended in "Terminate was called without an exception". So
+`main` also installs a `new_handler` that stops the same way
+(`BrowserStopOnFailedNew`), and so does the Lua allocator (see [Lua](lua.md)).
+Whichever allocation fails last is often on another thread than the one that used
+the memory up, so `runtime/heap-growth.js`, a pre-js, prints the stack the heap
+grew from once it passes 2 GB and at every further 512 MB: the heap grows on the
+thread whose allocation needs the room.
+
 ### When a pool task throws
 
 Natively, an exception that leaves a thread's function calls `std::terminate`, and

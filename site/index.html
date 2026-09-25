@@ -42,6 +42,9 @@ const query = new URLSearchParams(location.search);
 // the rest of a failure would otherwise push out, and the last lines before it.
 const recentOutput = [];
 const firstErrors = [];
+// The game is linked with ABORTING_MALLOC: when the heap cannot grow, the thread that
+// needed it stops with "Aborted(OOM)" (on the page's own thread, onAbort gets "OOM").
+let outOfMemory = false;
 if (query.has('thread-debug')) Error.stackTraceLimit = 64;
 
 function setState(state) {
@@ -60,20 +63,29 @@ function logLine(line, error = false) {
   const text = String(line).replace(/\x1b\[[0-9;]*m/g, '');
   recentOutput.push(text);
   if (recentOutput.length > 60) recentOutput.shift();
-  if (firstErrors.length < 20 && /error|exception|abort|assert|cannot enlarge|out of memory/i.test(text)) firstErrors.push(text);
+  if (firstErrors.length < 20 && /error|exception|abort|assert|cannot enlarge|out of memory|heap grew|lua memory/i.test(text)) firstErrors.push(text);
+  if (text.includes('Aborted(OOM)')) {
+    outOfMemory = true;
+    if (document.body.dataset.state === 'failed') status.textContent = 'The game ran out of memory.';
+  }
   (error ? console.error : console.log)(line);
   if (error && String(line).includes('Blocking on the main thread') && query.has('thread-debug')) console.log('Blocking call stack: ' + new Error().stack);
 }
 
 function failure(message) {
   // A failure is often reported more than once (the error and then the abort); the
-  // first report decides what the page says.
-  if (document.body.dataset.state !== 'failed') {
+  // first report decides what the page says, unless a later one shows that memory ran out.
+  outOfMemory = outOfMemory || String(message) === 'OOM';
+  if (outOfMemory) {
+    status.textContent = 'The game ran out of memory.';
+  } else if (document.body.dataset.state !== 'failed') {
     status.textContent = document.body.dataset.state === 'running' ? 'The game stopped with an error.' : 'The game could not start.';
   }
   setState('failed');
   const first = firstErrors.length ? 'First errors:\n' + firstErrors.join('\n') + '\n\nLast output:\n' : '';
-  errors.textContent = first + recentOutput.join('\n') + '\n' + String(message);
+  // wasmMemory is the game's heap (cortex.js), there once the game has loaded.
+  const heap = typeof wasmMemory === 'object' ? `\nHeap: ${Math.round(wasmMemory.buffer.byteLength / 1048576)} MB of 4096 MB` : '';
+  errors.textContent = first + recentOutput.join('\n') + '\n' + String(message) + heap;
   console.error('Game failure: ' + String(message));
   button.hidden = true;
 }

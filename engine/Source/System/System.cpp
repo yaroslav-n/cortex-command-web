@@ -39,6 +39,7 @@ using namespace RTE;
 #include <emscripten.h>
 #include <chrono>
 #include <cstdio>
+#include <new>
 
 // emscripten_sleep(0) returns through setTimeout, which Chrome clamps to 4 ms once
 // timers nest five deep, as a yield from inside a resumed timer callback always
@@ -111,6 +112,18 @@ void RTE::BrowserWaitForSoundFiles() {
 		BrowserNoteEventLoopTurn();
 	}
 	MAIN_THREAD_EM_ASM({ Module['showSoundFileWait'] && Module['showSoundFileWait'](false); });
+}
+
+void RTE::BrowserOutOfMemory() {
+	// The runtime's abort, as ABORTING_MALLOC's: it prints "Aborted(OOM)", which the page
+	// reads as memory having run out, calls the page's onAbort on the page's thread, and
+	// stops this thread.
+	EM_ASM({ abort('OOM'); });
+	__builtin_unreachable();
+}
+
+void RTE::BrowserStopOnFailedNew() {
+	std::set_new_handler([] { BrowserOutOfMemory(); });
 }
 
 namespace {
@@ -200,6 +213,10 @@ void RTE::BrowserCooperativeYield() {
 	s_YieldMilliseconds += std::chrono::duration<double, std::milli>(s_LastEventLoopTurn - now).count();
 }
 #else
+void RTE::BrowserOutOfMemory() {
+	std::abort();
+}
+void RTE::BrowserStopOnFailedNew() {}
 void RTE::BrowserMarkEngineThread() {}
 bool RTE::BrowserIsEngineThread() {
 	return false;

@@ -97,7 +97,8 @@ namespace FMOD {
 			try {
 				decoded = DecodeWholeSound(bytes);
 			} catch (const std::exception&) {
-				// Out of memory, most likely: this sound keeps decoding as it plays.
+				// A length no vector can hold, say: this sound keeps decoding as it plays.
+				// Running out of memory stops the game instead (BrowserStopOnFailedNew).
 			}
 			bytes.reset();
 			lock.lock();
