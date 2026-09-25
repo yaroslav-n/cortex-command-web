@@ -77,6 +77,12 @@ namespace RTE {
 		/// @return This LuaStateWrapper's internal lua state.
 		lua_State* GetLuaState() { return m_State; };
 
+#ifdef __EMSCRIPTEN__
+		/// Gets how much memory this state's Lua has allocated, as its allocator counts it. Safe to call from any thread.
+		/// @return The bytes this Lua state has allocated.
+		size_t GetAllocatedBytes() const { return m_Memory ? m_Memory->bytes.load(std::memory_order_relaxed) : 0; }
+#endif
+
 		/// Gets m_ScriptTimings.
 		/// @return m_ScriptTimings.
 		const std::unordered_map<std::string, PerformanceMan::ScriptTiming>& GetScriptTimings() const;
@@ -284,6 +290,22 @@ namespace RTE {
 
 		// For determinism, every Lua state has it's own random number generator.
 		RandomGenerator m_RandomGenerator; //!< The random number generator used for this lua state.
+
+#ifdef __EMSCRIPTEN__
+		/// What this state's allocator (BrowserLuaAllocate) counts. It lives apart from the wrapper so the allocator's pointer to it never moves.
+		struct MemoryAccount {
+			std::atomic<size_t> bytes = 0; //!< Bytes this Lua state has allocated.
+			size_t nextReport = 0; //!< The size at which the state is reported next, doubling each time.
+			const LuaStateWrapper* state = nullptr; //!< The state counted, to name it and its running script in a report.
+		};
+		std::unique_ptr<MemoryAccount> m_Memory; //!< This state's memory, counted as it is allocated.
+
+		/// The allocator of every Lua state in the browser: realloc and free, as luaL_newstate's, counting what the state holds.
+		static void* BrowserLuaAllocate(void* account, void* block, size_t oldSize, size_t newSize);
+
+		/// Prints how much memory this state holds and which script it is running, when it passes another report size.
+		void ReportMemory(size_t bytes) const;
+#endif
 	};
 
 	typedef std::vector<LuaStateWrapper> LuaStatesArray;

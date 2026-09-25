@@ -7,6 +7,8 @@
 
 #include <limits>
 #include <mutex>
+#include <cstdio>
+#include <cstdlib>
 
 #include "tracy/Tracy.hpp"
 #include "tracy/TracyLua.hpp"
@@ -35,8 +37,73 @@ bool MovableObjectIDLess::operator()(const MovableObject* lhs, const MovableObje
 	return lhs->GetUniqueID() < rhs->GetUniqueID();
 }
 
+#ifdef __EMSCRIPTEN__
+namespace {
+	// The first size at which a state is reported (LuaStateWrapper::ReportMemory); a
+	// state normally holds a few megabytes.
+	constexpr size_t c_FirstLuaMemoryReport = 256 * 1024 * 1024;
+
+	// As luaL_newstate's: an error outside any protected call.
+	int BrowserLuaPanic(lua_State* luaState) {
+		const char* message = lua_tostring(luaState, -1);
+		std::fprintf(stderr, "PANIC: unprotected error in call to Lua API (%s)\n", message ? message : "?");
+		return 0;
+	}
+} // namespace
+
+void* LuaStateWrapper::BrowserLuaAllocate(void* account, void* block, size_t oldSize, size_t newSize) {
+	MemoryAccount& memory = *static_cast<MemoryAccount*>(account);
+	if (newSize == 0) {
+		std::free(block);
+		memory.bytes.fetch_sub(oldSize, std::memory_order_relaxed);
+		return nullptr;
+	}
+	void* resized = std::realloc(block, newSize);
+	if (!resized) {
+		// Lua would raise "not enough memory" and every script after it fail the same way;
+		// the heap is spent, so stop as a failed operator new does (BrowserStopOnFailedNew).
+		BrowserOutOfMemory();
+	}
+	// Lua passes 0 as the old size of a new block. Unsigned wrap-around subtracts when the block shrinks.
+	const size_t bytes = memory.bytes.fetch_add(newSize - oldSize, std::memory_order_relaxed) + (newSize - oldSize);
+	// Only the thread running the state allocates for it, so the report size needs no atomics.
+	if (bytes >= memory.nextReport && memory.state) {
+		// Doubled past 2 GB, a 32-bit size would wrap round and report every allocation.
+		const size_t reached = std::max(memory.nextReport, bytes);
+		memory.nextReport = reached > std::numeric_limits<size_t>::max() / 2 ? std::numeric_limits<size_t>::max() : reached * 2;
+		memory.state->ReportMemory(bytes);
+	}
+	return resized;
+}
+
+void LuaStateWrapper::ReportMemory(size_t bytes) const {
+	// The game shares one 4 GB heap in the browser, and Lua's collector runs only between
+	// updates (LuaMan::StartAsyncGarbageCollection), so a script that keeps allocating in
+	// one call grows its state until it returns, or until the heap runs out. Called from
+	// inside Lua's allocator: it must not call into Lua or allocate.
+	const std::string_view script = m_CurrentlyRunningScriptPath.empty() ? std::string_view("no script file") : m_CurrentlyRunningScriptPath.substr(0, 300);
+	const LuaStatesArray& threadedStates = g_LuaMan.GetThreadedScriptStates();
+	if (!threadedStates.empty() && this >= &threadedStates.front() && this <= &threadedStates.back()) {
+		std::fprintf(stderr, "Lua memory: threaded state %d holds %zu MB, running %.*s\n", static_cast<int>(this - &threadedStates.front()),
+		             bytes / (1024 * 1024), static_cast<int>(script.size()), script.data());
+	} else {
+		std::fprintf(stderr, "Lua memory: the master state holds %zu MB, running %.*s\n", bytes / (1024 * 1024), static_cast<int>(script.size()), script.data());
+	}
+}
+#endif
+
 void LuaStateWrapper::Initialize() {
+#ifdef __EMSCRIPTEN__
+	// Lua's standard allocator, counting what each state holds, which ?perf-debug reports
+	// and which names a state that keeps growing (ReportMemory).
+	m_Memory = std::make_unique<MemoryAccount>();
+	m_Memory->nextReport = c_FirstLuaMemoryReport;
+	m_State = lua_newstate(&LuaStateWrapper::BrowserLuaAllocate, m_Memory.get());
+	lua_atpanic(m_State, &BrowserLuaPanic);
+	m_Memory->state = this;
+#else
 	m_State = luaL_newstate();
+#endif
 #ifdef __EMSCRIPTEN__
 	lua_pushthread(m_State);
 	lua_setfield(m_State, LUA_REGISTRYINDEX, "Cortex.MainThread");

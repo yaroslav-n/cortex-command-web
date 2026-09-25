@@ -22,6 +22,8 @@
 #include <malloc.h>
 #include <chrono>
 #include <cstdio>
+#include "LuaMan.h"
+#include "MovableMan.h"
 // This engine keeps its synchronous main loop by suspending it (JSPI), so SDL's
 // emscripten_set_main_loop_timing swap interval cannot schedule its frames.
 // The refresh's timestamp is kept for TimerMan, which counts the frame from it.
@@ -90,6 +92,18 @@ static void BrowserFrameTiming(bool beforeWait) {
 		int framesWithSeveral = 0;
 		RTE::BrowserTakeSimUpdateStats(simUpdates, framesWithNone, framesWithSeveral);
 		static double lastReportMs = 0.0;
+		// What holds the heap: Lua, counted by each state's allocator, and the objects in play.
+		const size_t luaMaster = RTE::LuaMan::Instance().GetMasterScriptState().GetAllocatedBytes();
+		size_t luaThreaded = 0;
+		size_t luaLargest = 0;
+		for (const RTE::LuaStateWrapper& state: RTE::LuaMan::Instance().GetThreadedScriptStates()) {
+			luaThreaded += state.GetAllocatedBytes();
+			luaLargest = std::max(luaLargest, state.GetAllocatedBytes());
+		}
+		std::fprintf(stderr, "Browser memory: Lua %.1f MB master, %.1f MB in %zu threaded states (largest %.1f MB) | %u objects, %ld actors, %ld particles\n",
+		             static_cast<double>(luaMaster) / 1048576.0, static_cast<double>(luaThreaded) / 1048576.0, RTE::LuaMan::Instance().GetThreadedScriptStates().size(),
+		             static_cast<double>(luaLargest) / 1048576.0, RTE::MovableMan::Instance().GetKnownObjectsCount(), RTE::MovableMan::Instance().GetActorCount(),
+		             RTE::MovableMan::Instance().GetParticleCount());
 		std::fprintf(stderr, "Browser perf: wall %.1f fps | engine %.2f ms/frame -> %.0f fps ceiling | %d frames / %.1f s | %d mid-frame yields, %.1f ms | worst engine %.1f ms, worst interval %.1f ms, %d over 25 ms | %.1f sim updates/s, %d frames with none, %d with several | heap %.0f MB, %.0f MB in use | last report %.1f ms\n",
 		             static_cast<double>(frames) / sinceReport, busyMs / frames,
 		             busyMs > 0.0 ? 1000.0 * frames / busyMs : 0.0, frames, sinceReport, yields, yieldMs, worstBusyMs, worstIntervalMs, lateFrames,

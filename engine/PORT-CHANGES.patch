@@ -1165,7 +1165,7 @@ diff -ruP --exclude=*.o original/Source/Lua/LuaBindingsManagers.cpp port/Source/
  LuaBindingRegisterFunctionDefinitionForType(ManagerLuaBindings, CameraMan) {
 diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
 --- original/Source/Main.cpp	2026-09-24 10:48:58
-+++ port/Source/Main.cpp	2026-09-24 18:12:41
++++ port/Source/Main.cpp	2026-09-25 15:49:36
 @@ -1,3 +1,17 @@
 +#ifdef __EMSCRIPTEN__
 +#include <emscripten.h>
@@ -1697,17 +1697,18 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  
  		drawTotalTime = g_TimerMan.GetAbsoluteTime() - drawStartTime;
  		g_PerformanceMan.UpdateMSPF(updateTotalTime, drawTotalTime);
-@@ -413,6 +735,9 @@
+@@ -413,6 +735,10 @@
  /// Implementation of the main function.
  /// </summary>
  int main(int argc, char** argv) {
 +#ifdef __EMSCRIPTEN__
 +	BrowserMarkEngineThread();
++	BrowserStopOnFailedNew();
 +#endif
  	install_allegro(SYSTEM_NONE, &errno, std::atexit);
  	loadpng_init();
  
-@@ -439,12 +764,59 @@
+@@ -439,12 +765,59 @@
  	System::Initialize(argv[0]);
  	SeedRNG();
  
@@ -1767,7 +1768,7 @@ diff -ruP --exclude=*.o original/Source/Main.cpp port/Source/Main.cpp
  	if (!System::IsInExternalModuleValidationMode()) {
  		// Load the different input device icons. This can't be done during UInputMan::Create() because the icon presets don't exist so we need to do this after modules are loaded.
  		g_UInputMan.LoadDeviceIcons();
-@@ -468,13 +840,39 @@
+@@ -468,13 +841,39 @@
  		RunGameLoop();
  	}
  
@@ -2636,18 +2637,20 @@ diff -ruP --exclude=*.o original/Source/Managers/FrameMan.h port/Source/Managers
  		/// Shared method for drawing lines to avoid duplicate code. Will by called by either DrawLine() or DrawDotLine().
 diff -ruP --exclude=*.o original/Source/Managers/LuaMan.cpp port/Source/Managers/LuaMan.cpp
 --- original/Source/Managers/LuaMan.cpp	2026-09-24 10:48:58
-+++ port/Source/Managers/LuaMan.cpp	2026-09-24 06:00:27
-@@ -5,6 +5,9 @@
++++ port/Source/Managers/LuaMan.cpp	2026-09-25 15:49:36
+@@ -5,6 +5,11 @@
  #include "ThreadMan.h"
  #include "System.h"
  
 +#include <limits>
 +#include <mutex>
++#include <cstdio>
++#include <cstdlib>
 +
  #include "tracy/Tracy.hpp"
  #include "tracy/TracyLua.hpp"
  
-@@ -28,8 +31,16 @@
+@@ -28,8 +33,81 @@
  	m_CurrentlyRunningScriptPath = "";
  }
  
@@ -2655,8 +2658,73 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.cpp port/Source/Managers
 +	return lhs->GetUniqueID() < rhs->GetUniqueID();
 +}
 +
++#ifdef __EMSCRIPTEN__
++namespace {
++	// The first size at which a state is reported (LuaStateWrapper::ReportMemory); a
++	// state normally holds a few megabytes.
++	constexpr size_t c_FirstLuaMemoryReport = 256 * 1024 * 1024;
++
++	// As luaL_newstate's: an error outside any protected call.
++	int BrowserLuaPanic(lua_State* luaState) {
++		const char* message = lua_tostring(luaState, -1);
++		std::fprintf(stderr, "PANIC: unprotected error in call to Lua API (%s)\n", message ? message : "?");
++		return 0;
++	}
++} // namespace
++
++void* LuaStateWrapper::BrowserLuaAllocate(void* account, void* block, size_t oldSize, size_t newSize) {
++	MemoryAccount& memory = *static_cast<MemoryAccount*>(account);
++	if (newSize == 0) {
++		std::free(block);
++		memory.bytes.fetch_sub(oldSize, std::memory_order_relaxed);
++		return nullptr;
++	}
++	void* resized = std::realloc(block, newSize);
++	if (!resized) {
++		// Lua would raise "not enough memory" and every script after it fail the same way;
++		// the heap is spent, so stop as a failed operator new does (BrowserStopOnFailedNew).
++		BrowserOutOfMemory();
++	}
++	// Lua passes 0 as the old size of a new block. Unsigned wrap-around subtracts when the block shrinks.
++	const size_t bytes = memory.bytes.fetch_add(newSize - oldSize, std::memory_order_relaxed) + (newSize - oldSize);
++	// Only the thread running the state allocates for it, so the report size needs no atomics.
++	if (bytes >= memory.nextReport && memory.state) {
++		// Doubled past 2 GB, a 32-bit size would wrap round and report every allocation.
++		const size_t reached = std::max(memory.nextReport, bytes);
++		memory.nextReport = reached > std::numeric_limits<size_t>::max() / 2 ? std::numeric_limits<size_t>::max() : reached * 2;
++		memory.state->ReportMemory(bytes);
++	}
++	return resized;
++}
++
++void LuaStateWrapper::ReportMemory(size_t bytes) const {
++	// The game shares one 4 GB heap in the browser, and Lua's collector runs only between
++	// updates (LuaMan::StartAsyncGarbageCollection), so a script that keeps allocating in
++	// one call grows its state until it returns, or until the heap runs out. Called from
++	// inside Lua's allocator: it must not call into Lua or allocate.
++	const std::string_view script = m_CurrentlyRunningScriptPath.empty() ? std::string_view("no script file") : m_CurrentlyRunningScriptPath.substr(0, 300);
++	const LuaStatesArray& threadedStates = g_LuaMan.GetThreadedScriptStates();
++	if (!threadedStates.empty() && this >= &threadedStates.front() && this <= &threadedStates.back()) {
++		std::fprintf(stderr, "Lua memory: threaded state %d holds %zu MB, running %.*s\n", static_cast<int>(this - &threadedStates.front()),
++		             bytes / (1024 * 1024), static_cast<int>(script.size()), script.data());
++	} else {
++		std::fprintf(stderr, "Lua memory: the master state holds %zu MB, running %.*s\n", bytes / (1024 * 1024), static_cast<int>(script.size()), script.data());
++	}
++}
++#endif
++
  void LuaStateWrapper::Initialize() {
++#ifdef __EMSCRIPTEN__
++	// Lua's standard allocator, counting what each state holds, which ?perf-debug reports
++	// and which names a state that keeps growing (ReportMemory).
++	m_Memory = std::make_unique<MemoryAccount>();
++	m_Memory->nextReport = c_FirstLuaMemoryReport;
++	m_State = lua_newstate(&LuaStateWrapper::BrowserLuaAllocate, m_Memory.get());
++	lua_atpanic(m_State, &BrowserLuaPanic);
++	m_Memory->state = this;
++#else
  	m_State = luaL_newstate();
++#endif
 +#ifdef __EMSCRIPTEN__
 +	lua_pushthread(m_State);
 +	lua_setfield(m_State, LUA_REGISTRYINDEX, "Cortex.MainThread");
@@ -2664,7 +2732,7 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.cpp port/Source/Managers
  	luabind::open(m_State);
  	tracy::LuaRegister(m_State);
  
-@@ -51,26 +62,33 @@
+@@ -51,26 +129,33 @@
  
  		// LuaJIT libraries
  	    {LUA_BITLIBNAME, luaopen_bit},
@@ -2698,7 +2766,7 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.cpp port/Source/Managers
  	// From LuaBind documentation:
  	// As mentioned in the Lua documentation, it is possible to pass an error handler function to lua_pcall(). LuaBind makes use of lua_pcall() internally when calling member functions and free functions.
  	// It is possible to set the error handler function that LuaBind will use globally:
-@@ -242,6 +260,8 @@
+@@ -242,6 +327,8 @@
  	luabind::globals(m_State)["LuaMan"] = this;
  	luabind::globals(m_State)["SettingsMan"] = &g_SettingsMan;
  
@@ -2707,7 +2775,7 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.cpp port/Source/Managers
  	const uint64_t seed = RandomNum<uint64_t>(0, std::numeric_limits<uint64_t>::max());
  	m_RandomGenerator.Seed(seed);
  
-@@ -323,6 +343,10 @@
+@@ -323,6 +410,10 @@
  void LuaMan::Initialize() {
  	m_MasterScriptState.Initialize();
  
@@ -2718,7 +2786,7 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.cpp port/Source/Managers
  	int luaStateCount = std::thread::hardware_concurrency();
  	if (g_SettingsMan.EnableLuaDebugging()) {
  		luaStateCount = 0;
-@@ -332,6 +356,7 @@
+@@ -332,6 +423,7 @@
  
  	m_ScriptStates = std::vector<LuaStateWrapper>(luaStateCount);
  	for (LuaStateWrapper& luaState: m_ScriptStates) {
@@ -2726,7 +2794,7 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.cpp port/Source/Managers
  		luaState.Initialize();
  	}
  }
-@@ -1285,6 +1310,22 @@
+@@ -1285,6 +1377,22 @@
  
  void LuaMan::StartAsyncGarbageCollection() {
  	ZoneScoped;
@@ -2751,7 +2819,7 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.cpp port/Source/Managers
  	allStates.reserve(m_ScriptStates.size() + 1);
 diff -ruP --exclude=*.o original/Source/Managers/LuaMan.h port/Source/Managers/LuaMan.h
 --- original/Source/Managers/LuaMan.h	2026-09-24 10:48:58
-+++ port/Source/Managers/LuaMan.h	2026-09-23 23:53:52
++++ port/Source/Managers/LuaMan.h	2026-09-25 15:49:36
 @@ -7,6 +7,7 @@
  
  #include "BS_thread_pool.hpp"
@@ -2781,7 +2849,20 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.h port/Source/Managers/L
  	/// A single lua state. Multiple of these can exist at once for multithreaded scripting.
  	class LuaStateWrapper {
  	public:
-@@ -85,7 +100,7 @@
+@@ -62,6 +77,12 @@
+ 		/// @return This LuaStateWrapper's internal lua state.
+ 		lua_State* GetLuaState() { return m_State; };
+ 
++#ifdef __EMSCRIPTEN__
++		/// Gets how much memory this state's Lua has allocated, as its allocator counts it. Safe to call from any thread.
++		/// @return The bytes this Lua state has allocated.
++		size_t GetAllocatedBytes() const { return m_Memory ? m_Memory->bytes.load(std::memory_order_relaxed) : 0; }
++#endif
++
+ 		/// Gets m_ScriptTimings.
+ 		/// @return m_ScriptTimings.
+ 		const std::unordered_map<std::string, PerformanceMan::ScriptTiming>& GetScriptTimings() const;
+@@ -85,7 +106,7 @@
  
  		/// Gets a list of the MOs registed as using us.
  		/// @return The MOs registed as using us.
@@ -2790,7 +2871,7 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.h port/Source/Managers/L
  #pragma endregion
  
  #pragma region Script Execution Handling
-@@ -248,8 +263,8 @@
+@@ -248,8 +269,8 @@
  		/// Clears all the member variables of this LuaStateWrapper, effectively resetting the members of this abstraction level only.
  		void Clear();
  
@@ -2801,6 +2882,29 @@ diff -ruP --exclude=*.o original/Source/Managers/LuaMan.h port/Source/Managers/L
  
  		lua_State* m_State;
  		Entity* m_TempEntity; //!< Temporary holder for an Entity object that we want to pass into the Lua state without fuss. Lets you export objects to lua easily.
+@@ -269,6 +290,22 @@
+ 
+ 		// For determinism, every Lua state has it's own random number generator.
+ 		RandomGenerator m_RandomGenerator; //!< The random number generator used for this lua state.
++
++#ifdef __EMSCRIPTEN__
++		/// What this state's allocator (BrowserLuaAllocate) counts. It lives apart from the wrapper so the allocator's pointer to it never moves.
++		struct MemoryAccount {
++			std::atomic<size_t> bytes = 0; //!< Bytes this Lua state has allocated.
++			size_t nextReport = 0; //!< The size at which the state is reported next, doubling each time.
++			const LuaStateWrapper* state = nullptr; //!< The state counted, to name it and its running script in a report.
++		};
++		std::unique_ptr<MemoryAccount> m_Memory; //!< This state's memory, counted as it is allocated.
++
++		/// The allocator of every Lua state in the browser: realloc and free, as luaL_newstate's, counting what the state holds.
++		static void* BrowserLuaAllocate(void* account, void* block, size_t oldSize, size_t newSize);
++
++		/// Prints how much memory this state holds and which script it is running, when it passes another report size.
++		void ReportMemory(size_t bytes) const;
++#endif
+ 	};
+ 
+ 	typedef std::vector<LuaStateWrapper> LuaStatesArray;
 diff -ruP --exclude=*.o original/Source/Managers/MenuMan.cpp port/Source/Managers/MenuMan.cpp
 --- original/Source/Managers/MenuMan.cpp	2026-09-24 10:48:59
 +++ port/Source/Managers/MenuMan.cpp	2026-09-25 00:56:16
@@ -3818,7 +3922,7 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.h port/Source/Manager
  		void UpdateMouseInput();
 diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Managers/WindowMan.cpp
 --- original/Source/Managers/WindowMan.cpp	2026-09-24 10:48:59
-+++ port/Source/Managers/WindowMan.cpp	2026-09-25 14:03:22
++++ port/Source/Managers/WindowMan.cpp	2026-09-25 15:49:36
 @@ -1,9 +1,11 @@
  #include "WindowMan.h"
 +#include "System.h"
@@ -3831,7 +3935,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  #include "UInputMan.h"
  #include "ConsoleMan.h"
  #include "PresetMan.h"
-@@ -14,6 +16,97 @@
+@@ -14,6 +16,111 @@
  #include "GLCheck.h"
  #include <SDL3/SDL.h>
  #include "glad/gl.h"
@@ -3841,6 +3945,8 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
 +#include <malloc.h>
 +#include <chrono>
 +#include <cstdio>
++#include "LuaMan.h"
++#include "MovableMan.h"
 +// This engine keeps its synchronous main loop by suspending it (JSPI), so SDL's
 +// emscripten_set_main_loop_timing swap interval cannot schedule its frames.
 +// The refresh's timestamp is kept for TimerMan, which counts the frame from it.
@@ -3909,6 +4015,18 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
 +		int framesWithSeveral = 0;
 +		RTE::BrowserTakeSimUpdateStats(simUpdates, framesWithNone, framesWithSeveral);
 +		static double lastReportMs = 0.0;
++		// What holds the heap: Lua, counted by each state's allocator, and the objects in play.
++		const size_t luaMaster = RTE::LuaMan::Instance().GetMasterScriptState().GetAllocatedBytes();
++		size_t luaThreaded = 0;
++		size_t luaLargest = 0;
++		for (const RTE::LuaStateWrapper& state: RTE::LuaMan::Instance().GetThreadedScriptStates()) {
++			luaThreaded += state.GetAllocatedBytes();
++			luaLargest = std::max(luaLargest, state.GetAllocatedBytes());
++		}
++		std::fprintf(stderr, "Browser memory: Lua %.1f MB master, %.1f MB in %zu threaded states (largest %.1f MB) | %u objects, %ld actors, %ld particles\n",
++		             static_cast<double>(luaMaster) / 1048576.0, static_cast<double>(luaThreaded) / 1048576.0, RTE::LuaMan::Instance().GetThreadedScriptStates().size(),
++		             static_cast<double>(luaLargest) / 1048576.0, RTE::MovableMan::Instance().GetKnownObjectsCount(), RTE::MovableMan::Instance().GetActorCount(),
++		             RTE::MovableMan::Instance().GetParticleCount());
 +		std::fprintf(stderr, "Browser perf: wall %.1f fps | engine %.2f ms/frame -> %.0f fps ceiling | %d frames / %.1f s | %d mid-frame yields, %.1f ms | worst engine %.1f ms, worst interval %.1f ms, %d over 25 ms | %.1f sim updates/s, %d frames with none, %d with several | heap %.0f MB, %.0f MB in use | last report %.1f ms\n",
 +		             static_cast<double>(frames) / sinceReport, busyMs / frames,
 +		             busyMs > 0.0 ? 1000.0 * frames / busyMs : 0.0, frames, sinceReport, yields, yieldMs, worstBusyMs, worstIntervalMs, lateFrames,
@@ -3929,7 +4047,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  #include "raylib/raylib.h"
  #include "raylib/rlgl.h"
  #include "Shader.h"
-@@ -68,7 +161,13 @@
+@@ -68,7 +175,13 @@
  	m_PrimaryWindowDisplayHeight = 0;
  	m_ResX = c_DefaultResX;
  	m_ResY = c_DefaultResY;
@@ -3943,7 +4061,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	m_Fullscreen = false;
  	m_EnableVSync = true;
  	m_UseMultiDisplays = false;
-@@ -119,13 +218,44 @@
+@@ -119,13 +232,44 @@
  
  	MapDisplays(false);
  
@@ -3988,7 +4106,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	InitializeOpenGL();
  
  	IMGUI_CHECKVERSION();
-@@ -136,7 +266,11 @@
+@@ -136,7 +280,11 @@
  
  	ImGui::StyleColorsDark();
  	ImGui_ImplSDL3_InitForOpenGL(m_PrimaryWindow.get(), m_GLContext.get());
@@ -4000,7 +4118,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	ImGui_ImplOpenGL3_NewFrame();
  	ImGui_ImplSDL3_NewFrame();
  	ImGui::NewFrame();
-@@ -145,7 +279,12 @@
+@@ -145,7 +293,12 @@
  	m_ScreenBlitShader = std::make_unique<Shader>(g_PresetMan.GetFullModulePath("Base.rte/Shaders/ScreenBlit.vert"), g_PresetMan.GetFullModulePath("Base.rte/Shaders/ScreenBlit.frag"));
  
  	// SDL is kinda dumb about the taskbar icon so we need to poll after creating the window for it to show up, otherwise there's no icon till it starts polling in the main menu loop.
@@ -4014,7 +4132,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  
  	m_PrimaryWindowDisplayIndex = SDL_GetDisplayForWindow(m_PrimaryWindow.get());
  
-@@ -158,6 +297,15 @@
+@@ -158,6 +311,15 @@
  	SDL_AddEventWatch((SDL_EventFilter)WindowMan::HandleWindowExposedEvent, nullptr);
  }
  
@@ -4030,7 +4148,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  void WindowMan::CreatePrimaryWindow() {
  	std::string windowTitle = "Cortex Command Community Project";
  
-@@ -204,7 +352,7 @@
+@@ -204,7 +366,7 @@
  	}
  
  	SDL_SetWindowMinimumSize(m_PrimaryWindow.get(), c_MinResX, c_MinResY);
@@ -4039,7 +4157,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	SDL_SetCursor(NULL);
  
  	if (!m_Fullscreen && IsResolutionMaximized(m_ResX, m_ResY, m_ResMultiplier)) {
-@@ -221,17 +369,26 @@
+@@ -221,17 +383,26 @@
  }
  
  void WindowMan::InitializeOpenGL() {
@@ -4067,7 +4185,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	SDL_GL_SetSwapInterval(m_EnableVSync ? 1 : 0);
  #else
  	SDL_GL_SetSwapInterval(m_Fullscreen && m_EnableVSync ? 1 : 0);
-@@ -253,10 +410,17 @@
+@@ -253,10 +424,17 @@
  
  void WindowMan::CreateBackBufferTexture() {
  	m_ScreenBuffer = std::make_unique<RenderTarget>(FloatRect(0, 0, m_ResX, m_ResY), FloatRect(0, 0, m_ResX, m_ResY));
@@ -4085,7 +4203,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  }
  
  int WindowMan::GetWindowResX() {
-@@ -282,7 +446,9 @@
+@@ -282,7 +460,9 @@
  	int sdlEnableVSync = m_Fullscreen && m_EnableVSync ? 1 : 0;
  #endif
  
@@ -4095,7 +4213,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  }
  
  void WindowMan::RefocusWindow() const {
-@@ -520,7 +686,7 @@
+@@ -520,7 +700,7 @@
  			SDL_MaximizeWindow(m_PrimaryWindow.get());
  		} else {
  			SDL_RestoreWindow(m_PrimaryWindow.get());
@@ -4104,7 +4222,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  		}
  		SDL_SetWindowSize(m_PrimaryWindow.get(), newResX * newResMultiplier, newResY * newResMultiplier);
  		SDL_SetWindowBordered(m_PrimaryWindow.get(), true);
-@@ -554,6 +720,112 @@
+@@ -554,6 +734,112 @@
  	g_ConsoleMan.PrintString("SYSTEM: " + std::string(!recoveredToPreviousSettings ? "Switched to different resolution." : "Failed to switch to different resolution. Reverted to previous settings."));
  }
  
@@ -4217,7 +4335,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  void WindowMan::ToggleFullscreen() {
  	bool fullscreen = !m_Fullscreen;
  
-@@ -732,7 +1004,15 @@
+@@ -732,7 +1018,15 @@
  				break;
  			case SDL_EVENT_WINDOW_RESIZED:
  			case SDL_WINDOW_MAXIMIZED:
@@ -4233,7 +4351,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  				break;
  			default:
  				break;
-@@ -743,7 +1023,9 @@
+@@ -743,7 +1037,9 @@
  
  void WindowMan::ClearBackbuffer(bool clearFrameMan) {
  	GL_CHECK(glBindFramebuffer(GL_FRAMEBUFFER, 0));
@@ -4243,7 +4361,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	if (clearFrameMan) {
  		g_FrameMan.ClearBackBuffer32();
  	}
-@@ -755,16 +1037,29 @@
+@@ -755,16 +1051,29 @@
  }
  
  void WindowMan::UploadFrame() {
@@ -4275,7 +4393,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  
  	m_ScreenBlitShader->Begin();
  	rlSetUniformSampler(m_ScreenBlitShader->GetUniformLocation("rteGUITexture"), m_BackBuffer32Texture);
-@@ -777,7 +1072,13 @@
+@@ -777,7 +1086,13 @@
  		DrawTextureRec(m_ScreenBuffer->GetColorTexture(), {0.0f, 0.0f, static_cast<float>(m_ResX), -static_cast<float>(m_ResY)}, {0, 0}, {255, 255, 255, 255});
  	}
  	m_ScreenBlitShader->End();
@@ -4290,7 +4408,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  
  	rlDisableColorBlend();
  	if (m_MultiDisplayWindows.empty()) {
-@@ -787,7 +1088,7 @@
+@@ -787,7 +1102,7 @@
  		rlMatrixMode(RL_MODELVIEW);
  		rlLoadIdentity();
  		GL_CHECK(glViewport(m_PrimaryWindowViewport->x, m_PrimaryWindowViewport->y, m_PrimaryWindowViewport->w, m_PrimaryWindowViewport->h));
@@ -4299,7 +4417,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  		rlDrawRenderBatchActive();
  	} else {
  		for (size_t i = 0; i < m_MultiDisplayWindows.size(); ++i) {
-@@ -801,12 +1102,30 @@
+@@ -801,12 +1116,30 @@
  			rlLoadIdentity();
  			rlOrtho(0, windowW, windowH, 0, -1.0, 1.0);
  
@@ -4331,7 +4449,7 @@ diff -ruP --exclude=*.o original/Source/Managers/WindowMan.cpp port/Source/Manag
  	Present();
  	TracyGpuCollect;
  	FrameMark;
-@@ -816,12 +1135,60 @@
+@@ -816,12 +1149,60 @@
  }
  
  void WindowMan::Present() {
@@ -7501,8 +7619,8 @@ diff -ruP --exclude=*.o original/Source/System/SpatialPartitionGrid.cpp port/Sou
  			continue;
 diff -ruP --exclude=*.o original/Source/System/System.cpp port/Source/System/System.cpp
 --- original/Source/System/System.cpp	2026-09-24 10:48:59
-+++ port/Source/System/System.cpp	2026-09-24 15:11:17
-@@ -35,8 +35,202 @@
++++ port/Source/System/System.cpp	2026-09-25 15:49:36
+@@ -35,8 +35,219 @@
  
  using namespace RTE;
  
@@ -7510,6 +7628,7 @@ diff -ruP --exclude=*.o original/Source/System/System.cpp port/Source/System/Sys
 +#include <emscripten.h>
 +#include <chrono>
 +#include <cstdio>
++#include <new>
 +
 +// emscripten_sleep(0) returns through setTimeout, which Chrome clamps to 4 ms once
 +// timers nest five deep, as a yield from inside a resumed timer callback always
@@ -7582,6 +7701,18 @@ diff -ruP --exclude=*.o original/Source/System/System.cpp port/Source/System/Sys
 +		BrowserNoteEventLoopTurn();
 +	}
 +	MAIN_THREAD_EM_ASM({ Module['showSoundFileWait'] && Module['showSoundFileWait'](false); });
++}
++
++void RTE::BrowserOutOfMemory() {
++	// The runtime's abort, as ABORTING_MALLOC's: it prints "Aborted(OOM)", which the page
++	// reads as memory having run out, calls the page's onAbort on the page's thread, and
++	// stops this thread.
++	EM_ASM({ abort('OOM'); });
++	__builtin_unreachable();
++}
++
++void RTE::BrowserStopOnFailedNew() {
++	std::set_new_handler([] { BrowserOutOfMemory(); });
 +}
 +
 +namespace {
@@ -7671,6 +7802,10 @@ diff -ruP --exclude=*.o original/Source/System/System.cpp port/Source/System/Sys
 +	s_YieldMilliseconds += std::chrono::duration<double, std::milli>(s_LastEventLoopTurn - now).count();
 +}
 +#else
++void RTE::BrowserOutOfMemory() {
++	std::abort();
++}
++void RTE::BrowserStopOnFailedNew() {}
 +void RTE::BrowserMarkEngineThread() {}
 +bool RTE::BrowserIsEngineThread() {
 +	return false;
@@ -7705,7 +7840,7 @@ diff -ruP --exclude=*.o original/Source/System/System.cpp port/Source/System/Sys
  bool System::s_ExternalModuleValidation = false;
  std::string System::s_ThisExePathAndName = "";
  std::string System::s_WorkingDirectory = ".";
-@@ -139,6 +333,11 @@
+@@ -139,6 +350,11 @@
  }
  
  bool System::PathExistsCaseSensitive(const std::string& pathToCheck) {
@@ -7719,8 +7854,8 @@ diff -ruP --exclude=*.o original/Source/System/System.cpp port/Source/System/Sys
  		if (s_WorkingTree.empty()) {
 diff -ruP --exclude=*.o original/Source/System/System.h port/Source/System/System.h
 --- original/Source/System/System.h	2026-09-24 10:48:59
-+++ port/Source/System/System.h	2026-09-24 15:11:17
-@@ -7,6 +7,59 @@
++++ port/Source/System/System.h	2026-09-25 15:49:36
+@@ -7,6 +7,70 @@
  
  namespace RTE {
  
@@ -7776,11 +7911,22 @@ diff -ruP --exclude=*.o original/Source/System/System.h port/Source/System/Syste
 +	/// that ran none and frames that ran more than one.
 +	void BrowserTakeSimUpdateStats(int& updates, int& framesWithNone, int& framesWithSeveral);
 +
++	/// Stops the game at once with "OOM", as the heap does when it cannot grow
++	/// (ABORTING_MALLOC, CMakeLists.txt), for an allocation that failed without the heap
++	/// being asked to grow: near 4 GB, sbrk refuses a request that would pass the end of
++	/// the address space before it gets that far. Browser only; never returns.
++	[[noreturn]] void BrowserOutOfMemory();
++
++	/// Makes a failed operator new stop the game with BrowserOutOfMemory instead of
++	/// throwing std::bad_alloc. Out of memory, the game cannot go on, and describing the
++	/// exception needs memory too. Does nothing natively.
++	void BrowserStopOnFailedNew();
++
 +
  	/// Class for the system functionality.
  	class System {
  
-@@ -112,8 +165,55 @@
+@@ -112,8 +176,55 @@
  		/// @return Whether the program is running in module validation mode.
  		static bool IsInExternalModuleValidationMode() { return s_ExternalModuleValidation; }
  
@@ -7836,7 +7982,7 @@ diff -ruP --exclude=*.o original/Source/System/System.h port/Source/System/Syste
  #pragma endregion
  
  #pragma region Misc
-@@ -131,6 +231,9 @@
+@@ -131,6 +242,9 @@
  	private:
  		static bool s_Quit; //!< Whether the user requested program termination through GUI or the window close button.
  		static bool s_LogToCLI; //!< Bool to tell whether to print the loading log and anything specified with PrintToCLI to command-line or not.

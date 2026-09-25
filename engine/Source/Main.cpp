@@ -737,6 +737,7 @@ static const bool RTESetExceptionHandlers = []() {
 int main(int argc, char** argv) {
 #ifdef __EMSCRIPTEN__
 	BrowserMarkEngineThread();
+	BrowserStopOnFailedNew();
 #endif
 	install_allegro(SYSTEM_NONE, &errno, std::atexit);
 	loadpng_init();
