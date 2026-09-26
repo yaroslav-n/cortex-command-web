@@ -1,0 +1,6 @@
+# Cross-origin isolation, which the game's threads need (serve.py sends the same). These
+# apply to the static assets; worker.js adds them to what it serves itself.
+/cortex-command/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Cross-Origin-Resource-Policy: same-origin

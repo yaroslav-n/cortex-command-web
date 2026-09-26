@@ -10,6 +10,10 @@ jobs:
   build-and-check:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    # Runs on main deploy, so they go one at a time, in order; the others run freely.
+    concurrency:
+      group: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && 'deploy' || github.run_id }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
 
@@ -41,3 +45,14 @@ jobs:
         run: |
           NODE=$(ls -d toolchains/emsdk/node/*/bin/node | tail -1)
           "$NODE" tools/run-checks.mjs --chrome "$(command -v google-chrome)"
+
+      # Every check passed: main goes to https://yaroslav.au/cortex-command/
+      # (notes/hosting.md). Wrangler runs on the Emscripten SDK's Node.
+      - name: Deploy to yaroslav.au/cortex-command
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          PATH="$PWD/$(dirname "$(ls -d toolchains/emsdk/node/*/bin/node | tail -1)"):$PATH"
+          deploy/deploy.sh

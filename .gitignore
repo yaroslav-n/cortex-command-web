@@ -12,3 +12,6 @@
 .DS_Store
 __pycache__/
 *.pyc
+
+# Wrangler's local state and cache (deploy/deploy.sh --local, wrangler dev)
+.wrangler/

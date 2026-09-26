@@ -36,6 +36,7 @@ site/                the page that loads the game (copied to dist/index.html)
 vendor/              Lua 5.1.5, LuaBitOp, miniaudio
 tests/               contracts and their browser pages
 tools/               toolchain setup, the headless Chrome driver, comparison tools
+deploy/              the Cloudflare Worker at yaroslav.au/cortex-command and its deploy script
 notes/               this directory, and PORT-STATUS.md, the build log
 toolchains/          Emscripten SDK and CMake (installed, not committed)
 build/, dist/        build output (not committed); dist/ is the deployable app
@@ -95,6 +96,8 @@ never been tried. Assume nothing about them.
   claiming anything is "the same as the original"**.
 - [Testing](testing.md) — how to run and observe the game, and how the
   native/browser comparison works.
+- [Hosting](hosting.md) — yaroslav.au/cortex-command: how `main` is deployed, and
+  how the data package, too large for Cloudflare's assets, is served from R2.
 
 ## Parity status
 
