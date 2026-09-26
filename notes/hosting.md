@@ -16,13 +16,18 @@ home page, and the two deploy independently.
 ## What serves what
 
 `deploy/deploy.sh` copies from `dist/` into `build/deploy/`, under the path they are
-served at: `cortex-command/` holds `index.html`, `cortex.js`, `cortex.wasm`,
-`cortex.data.json` and `audio/`, next to `_headers` (from `deploy/_headers`). Those are
+served at: `cortex-command/` holds `index.html`, `social-preview.jpg` (the picture a
+shared link shows), `cortex.js`, `cortex.wasm`, `cortex.data.json` and `audio/`, next to
+`_headers` (from `deploy/_headers`). Those are
 the Worker's static assets, which Cloudflare answers itself without running the
 Worker's code. They come with the cross-origin isolation headers from `_headers`, an
 `ETag`, and `Cache-Control: public, max-age=0, must-revalidate`, the revalidation the
 README asks a host for. `/cortex-command` redirects to `/cortex-command/` (307). The
-test pages are not deployed.
+test pages are not deployed. The preview picture alone is sent with
+`Cross-Origin-Resource-Policy: cross-origin` instead of `same-origin`, since other sites
+are meant to show it: its rule in `_headers` removes the header the `/cortex-command/*`
+rule set (`! Cross-Origin-Resource-Policy`) and sets its own, where two rules setting
+the same header would send both values joined by a comma.
 
 The data package, `cortex.data`, is 52 MB, over Cloudflare's 25 MiB limit for one
 asset. It lives in the R2 bucket `cortex-command` instead, under
