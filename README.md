@@ -4,6 +4,9 @@ A port of the [Cortex Command Community Project](https://github.com/cortex-comma
 to WebAssembly: the original C++ engine, compiled with Emscripten, running in
 Chrome with its game data, Lua scripts, audio, saves and editors.
 
+**Play it at https://yaroslav.au/cortex-command/**, deployed from `main` whenever every
+check passes ([hosting](notes/hosting.md)).
+
 It is built from upstream commit `20dfb3ea5`, with the engine's platform layers
 adapted for the browser:
 

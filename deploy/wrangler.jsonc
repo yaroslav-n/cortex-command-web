@@ -1,0 +1,24 @@
+// The game at https://yaroslav.au/cortex-command/, a Cloudflare Worker with static assets
+// (notes/hosting.md). deploy/deploy.sh fills ../build/deploy from dist/ and deploys.
+{
+  "name": "cortex-command",
+  "main": "worker.js",
+  "compatibility_date": "2026-09-26",
+  // The assets keep the path they are served at: build/deploy/cortex-command/index.html
+  // is https://yaroslav.au/cortex-command/.
+  "assets": {
+    "directory": "../build/deploy",
+    "binding": "ASSETS"
+  },
+  // The data package, too large to be an asset, under cortex.data/<its SHA-256>.
+  "r2_buckets": [
+    { "binding": "PACKAGES", "bucket_name": "cortex-command" }
+  ],
+  // yaroslav.au itself belongs to the home page's Worker (yaroslav-n/yaroslav.au);
+  // routes run before it, so these paths come here.
+  "routes": [
+    { "pattern": "yaroslav.au/cortex-command", "zone_name": "yaroslav.au" },
+    { "pattern": "yaroslav.au/cortex-command/*", "zone_name": "yaroslav.au" }
+  ],
+  "workers_dev": false
+}
