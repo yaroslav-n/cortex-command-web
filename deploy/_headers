@@ -4,3 +4,8 @@
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
   Cross-Origin-Resource-Policy: same-origin
+
+# The link preview picture is for other sites to show, so any site may embed it.
+/cortex-command/social-preview.jpg
+  ! Cross-Origin-Resource-Policy
+  Cross-Origin-Resource-Policy: cross-origin

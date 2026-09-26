@@ -164,7 +164,7 @@ laid out as [the spec](../specs/page.md) says: on the left "Open fullscreen by
 pressing Ctrl + F"; on the right three links separated by bullets, each with an icon
 and a faint underline: "Cortex Command Web" and "Cortex Command Community Project"
 with GitHub icons, to this port's repository and the original's, and "Submit a bug"
-with a bug icon (both icons Octicons), which opens the bug report form. Below 700 px
+with a bug icon (both icons Octicons), which opens a new issue on this repository. Below 700 px
 the Ctrl+F note is hidden and the rest stays on the right; below 600 px the strip's
 text is smaller. The game's area (`#game`, the canvas and the start screen) is the
 window less the strip.

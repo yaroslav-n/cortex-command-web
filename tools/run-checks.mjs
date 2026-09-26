@@ -337,6 +337,7 @@ const CONTENT_TYPES = {
   '.json': 'application/json',
   '.data': 'application/octet-stream',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
 };
 
 // The same headers serve.py sends: SharedArrayBuffer needs cross-origin isolation.
@@ -700,7 +701,7 @@ async function runStartScreen(connection, base, check) {
         window: innerHeight })`));
       const links = strip.links.join(', ');
       const expected = 'github.com/yaroslav-n/cortex-command-web _blank icon, github.com/cortex-command-community/Cortex-Command-Community-Project _blank icon, '
-        + 'forms.gle/xyCqE7HFgA5KzMt5A _blank icon';
+        + 'github.com/yaroslav-n/cortex-command-web/issues/new _blank icon';
       if (links !== expected || strip.names !== 'Cortex Command Web | Cortex Command Community Project | Submit a bug' ||
         strip.hint !== 'Open fullscreen by pressing Ctrl + F' ||
         strip.bar !== 50 || strip.game !== strip.window - 50) {
@@ -712,9 +713,22 @@ async function runStartScreen(connection, base, check) {
       }
       if (!(await waitFor(tab, "document.fullscreenElement?.id === 'game'", 5000))) return { status: 'fail', detail: 'Ctrl+F did not open fullscreen', lines: tab.lines };
       await tab.evaluate('document.exitFullscreen()');
+      // A shared link's preview (specs/page.md): its tags, and the picture they name, which
+      // dist/ holds under the same name.
+      const preview = JSON.parse(await tab.evaluate(`(async () => {
+        const meta = (key) => document.querySelector('meta[property="' + key + '"], meta[name="' + key + '"]')?.content;
+        const image = new Image();
+        image.src = 'social-preview.jpg';
+        await image.decode().catch(() => {});
+        return JSON.stringify({ title: meta('og:title'), image: meta('og:image'), card: meta('twitter:card'), size: image.naturalWidth + 'x' + image.naturalHeight });
+      })()`));
+      if (preview.title !== 'Cortex Command Web' || preview.image !== 'https://yaroslav.au/cortex-command/social-preview.jpg' ||
+        preview.card !== 'summary_large_image' || preview.size !== '1200x630') {
+        return { status: 'fail', detail: `the link preview is not as expected: ${JSON.stringify(preview)}`, lines: tab.lines };
+      }
     }
     const text = await tab.evaluate("document.getElementById('status').textContent");
-    return { status: 'pass', detail: `${label || text} (${(bytes / 1e6).toFixed(2)} MB fetched)${check.start.strip ? ', strip under the game, Ctrl+F fullscreen' : ''}`, lines: tab.lines };
+    return { status: 'pass', detail: `${label || text} (${(bytes / 1e6).toFixed(2)} MB fetched)${check.start.strip ? ', strip under the game, Ctrl+F fullscreen, link preview' : ''}`, lines: tab.lines };
   });
 }
 

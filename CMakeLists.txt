@@ -133,6 +133,8 @@ set_property(TARGET cortex APPEND PROPERTY LINK_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/runtime/thread-errors.js" "${CMAKE_CURRENT_SOURCE_DIR}/runtime/heap-growth.js")
 # The page that loads the game. dist/ is build output; its sources live in site/.
 configure_file(site/index.html "${CORTEX_DIST_DIR}/index.html" COPYONLY)
+# The picture a shared link to the page shows (its og:image).
+configure_file(site/social-preview.jpg "${CORTEX_DIST_DIR}/social-preview.jpg" COPYONLY)
 
 # Audio mixes on miniaudio's AudioWorklet backend, on its own thread, so a long
 # synchronous block on the page's main thread no longer stalls playback. The

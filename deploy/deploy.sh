@@ -26,11 +26,12 @@ if [ -z "$SHA" ] || [ "$SHA" != "${ACTUAL%% *}" ]; then
   exit 1
 fi
 
-# The assets: the page, the program, the package's description and the sounds, under
-# the path they are served at. Not the package, which is in R2, nor the test pages.
+# The assets: the page, its link preview picture, the program, the package's
+# description and the sounds, under the path they are served at. Not the package,
+# which is in R2, nor the test pages.
 rm -rf "$OUT"
 mkdir -p "$OUT/cortex-command"
-cp "$DIST/index.html" "$DIST/cortex.js" "$DIST/cortex.wasm" "$DIST/cortex.data.json" "$OUT/cortex-command/"
+cp "$DIST/index.html" "$DIST/social-preview.jpg" "$DIST/cortex.js" "$DIST/cortex.wasm" "$DIST/cortex.data.json" "$OUT/cortex-command/"
 cp -R "$DIST/audio" "$OUT/cortex-command/audio"
 cp "$ROOT/deploy/_headers" "$OUT/_headers"
 
