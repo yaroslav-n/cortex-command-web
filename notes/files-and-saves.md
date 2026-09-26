@@ -192,7 +192,7 @@ each sound: its engine path, size, length, sample rate and copy.
    a sound from an empty file (`ContentFile::LoadAndReleaseSound`).
 2. **Once the game has loaded** (not earlier, so the package gets the bandwidth),
    it takes each distinct file from Cache Storage (`cortex-sounds`) or downloads
-   it, six at a time and in the list's order otherwise, and writes it over the
+   it, 24 at a time and in the list's order otherwise, and writes it over the
    stand-ins of every sound with those contents. A small note in the corner shows
    the progress ("Loading sounds: 42%").
 3. FMOD creates every `Sound` from the list alone, since a sound needs only its
@@ -289,7 +289,8 @@ had and the page gets an `online` event. Both empty the cache first and shorten 
 page's timeouts with `?sound-file-timeouts=4,180` and `=20,10` (the stall and the
 deadline, in seconds), which a player's page never has.
 
-Driven by hand with a scratch server: with every sound file refused from the start,
+Driven by hand with a scratch server, when the page downloaded six files at a time: with
+every sound file refused from the start,
 the page made 15 requests in the first 45 s (11 at once, until six in a row had
 failed, then one after 1, 3, 9 and 27 s) and, with no `online` event, had every
 file 23 to 56 s after the server answered again, as the next try was at most a

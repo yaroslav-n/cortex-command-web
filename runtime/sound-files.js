@@ -29,7 +29,11 @@ if (typeof window !== 'undefined') {
   (() => {
     const DIRECTORY = 'audio/';
     const CACHE = 'cortex-sounds';
-    const PARALLEL = 6;
+    // Downloads under way at once. They share Chrome's one HTTP/2 connection to the host,
+    // where 24 at a time moved about twice as many bytes a second as 6 on a fast link.
+    const PARALLEL = 24;
+    // Tries failing in a row that are taken for an outage: from then on, one file at a time.
+    const OUTAGE_FAILURES = 6;
     // A download that receives nothing for this long is dropped and tried again; the
     // page stops waiting for the missing files once nothing at all has arrived for the
     // second. tools/run-checks.mjs shortens both with ?sound-file-timeouts=<s>,<s>.
@@ -223,7 +227,7 @@ if (typeof window !== 'undefined') {
 
     const pump = () => {
       const now = performance.now();
-      const probing = failStreak >= PARALLEL;
+      const probing = failStreak >= OUTAGE_FAILURES;
       for (let download; active < (probing ? 1 : PARALLEL) && (download = next(now, probing)); ) {
         if (probing) probes++;
         active++;
@@ -247,7 +251,7 @@ if (typeof window !== 'undefined') {
             retrying.delete(download);
             retrying.add(download);
             failedTries++;
-            if (++failStreak >= PARALLEL) nextProbeAt = performance.now() + 1000 * Math.min(60, 3 ** probes);
+            if (++failStreak >= OUTAGE_FAILURES) nextProbeAt = performance.now() + 1000 * Math.min(60, 3 ** probes);
             console.warn(`Could not load the sound file ${download.url} (${download.paths.join(', ')}): ${error}; trying again in ${delay} s`);
           })
           .finally(() => {
