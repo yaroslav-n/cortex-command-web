@@ -231,6 +231,16 @@ is not one (`kept_escape_sent`).
 The Esc is the one the game would have had natively, so it does whatever Esc does
 there: the pause menu in play and in the editors, closing the console.
 
+**Esc with Shift.** Upstream pauses with `PauseActivity(true, FlagShiftState())`
+(`UInputMan::HandleSpecialInput`): Shift+Esc skips the pause menu and goes straight to
+the Scenario screen, or to the campaign map in Conquest. Left Shift is player one's
+Move Fast, so an Esc pressed while running left the game; since the kept Esc above
+reaches the game at the first press, often with Shift still held, it happened more
+than before. In the browser Esc always opens the pause menu
+([specs/pause-menu.md](../specs/pause-menu.md)); "Back to Scenario Menu" is in it.
+Checked in the Tutorial: Shift+Esc opened the pause menu, twice, where before it opened
+the Scenario screen with "Resume Game".
+
 Reproduced and checked in headless Chrome with a real lock, in Dummy Assault: take
 the lock with a click, drop it and blur the page (`document.exitPointerLock()`, a
 `mouseleave` on the canvas and a `blur` on the window), give the focus back, move and
