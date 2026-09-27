@@ -1122,7 +1122,14 @@ void UInputMan::HandleSpecialInput() {
 		const GameActivity* gameActivity = dynamic_cast<GameActivity*>(g_ActivityMan.GetActivity());
 		// Don't allow pausing and returning to main menu when running in server mode to not disrupt the simulation for the clients
 		if (AnyStartPress(false) && (!gameActivity || !gameActivity->IsBuyGUIVisible(-1))) {
+#ifdef __EMSCRIPTEN__
+			// Esc always opens the pause menu (specs/pause-menu.md). Upstream skips it with Shift
+			// held, going straight to the Scenario screen, but Left Shift is player one's Move Fast:
+			// an Esc pressed while running left the game.
+			g_ActivityMan.PauseActivity(true, false);
+#else
 			g_ActivityMan.PauseActivity(true, FlagShiftState());
+#endif
 			return;
 		}
 #ifdef __EMSCRIPTEN__

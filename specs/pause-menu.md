@@ -1,5 +1,7 @@
 # The pause menu
 
+- Esc in play always opens the pause menu, with Shift held or not. (Upstream goes
+  straight to the Scenario screen on Shift+Esc; Left Shift is player one's Move Fast.)
 - In a scenario, the pause menu reads, top to bottom: Restart Scenario; a gap; Back
   to Scenario Menu, Save or Load Game, Settings and (where upstream shows it) Mod
   Manager; a gap; Resume. Restart Scenario starts the scenario over.

@@ -4124,7 +4124,7 @@ diff -ruP --exclude=*.o original/Source/Managers/TimerMan.h port/Source/Managers
  		std::chrono::steady_clock::time_point m_StartTime; //!< The point in real time when the simulation (re)started.
 diff -ruP --exclude=*.o original/Source/Managers/UInputMan.cpp port/Source/Managers/UInputMan.cpp
 --- original/Source/Managers/UInputMan.cpp	2026-09-24 10:48:59
-+++ port/Source/Managers/UInputMan.cpp	2026-09-25 20:47:36
++++ port/Source/Managers/UInputMan.cpp	2026-09-27 22:54:38
 @@ -35,13 +35,13 @@
  	m_SkipHandlingSpecialInput = false;
  	m_TextInput.clear();
@@ -4230,8 +4230,18 @@ diff -ruP --exclude=*.o original/Source/Managers/UInputMan.cpp port/Source/Manag
  			mouse.change[inputEvent.button.button] = inputEvent.button.down != mouse.state[inputEvent.button.button];
  			mouse.state[inputEvent.button.button] = inputEvent.button.down;
  			if (inputEvent.button.which != 0) {
-@@ -1071,6 +1125,14 @@
+@@ -1068,9 +1122,24 @@
+ 		const GameActivity* gameActivity = dynamic_cast<GameActivity*>(g_ActivityMan.GetActivity());
+ 		// Don't allow pausing and returning to main menu when running in server mode to not disrupt the simulation for the clients
+ 		if (AnyStartPress(false) && (!gameActivity || !gameActivity->IsBuyGUIVisible(-1))) {
++#ifdef __EMSCRIPTEN__
++			// Esc always opens the pause menu (specs/pause-menu.md). Upstream skips it with Shift
++			// held, going straight to the Scenario screen, but Left Shift is player one's Move Fast:
++			// an Esc pressed while running left the game.
++			g_ActivityMan.PauseActivity(true, false);
++#else
  			g_ActivityMan.PauseActivity(true, FlagShiftState());
++#endif
  			return;
  		}
 +#ifdef __EMSCRIPTEN__
