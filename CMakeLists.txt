@@ -131,8 +131,14 @@ set_property(TARGET cortex APPEND PROPERTY LINK_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/runtime/persistence-journal.js" "${CMAKE_CURRENT_SOURCE_DIR}/runtime/filesystem.js"
   "${CMAKE_CURRENT_SOURCE_DIR}/runtime/sound-files.js" "${CMAKE_CURRENT_SOURCE_DIR}/runtime/engine-in-worker.js"
   "${CMAKE_CURRENT_SOURCE_DIR}/runtime/thread-errors.js" "${CMAKE_CURRENT_SOURCE_DIR}/runtime/heap-growth.js")
-# The page that loads the game. dist/ is build output; its sources live in site/.
-configure_file(site/index.html "${CORTEX_DIST_DIR}/index.html" COPYONLY)
+# The page that loads the game. dist/ is build output; its sources live in site/. It is
+# given the game's version (c_VersionString), @CORTEX_GAME_VERSION@ in it, to say which
+# mods were made for another (specs/mods.md).
+set(CORTEX_GAME_VERSION_HEADER "${ENGINE}/Source/System/GameVersion.h")
+file(STRINGS "${CORTEX_GAME_VERSION_HEADER}" CORTEX_GAME_VERSION REGEX "c_VersionString = \"[^\"]+\"")
+string(REGEX REPLACE ".*c_VersionString = \"([^\"]+)\".*" "\\1" CORTEX_GAME_VERSION "${CORTEX_GAME_VERSION}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CORTEX_GAME_VERSION_HEADER}")
+configure_file(site/index.html "${CORTEX_DIST_DIR}/index.html" @ONLY)
 # The picture a shared link to the page shows (its og:image).
 configure_file(site/social-preview.jpg "${CORTEX_DIST_DIR}/social-preview.jpg" COPYONLY)
 

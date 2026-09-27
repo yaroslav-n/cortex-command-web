@@ -7218,37 +7218,35 @@ diff -ruP --exclude=*.o original/Source/System/ContentFile.cpp port/Source/Syste
  
 diff -ruP --exclude=*.o original/Source/System/DataModule.cpp port/Source/System/DataModule.cpp
 --- original/Source/System/DataModule.cpp	2026-09-24 10:48:59
-+++ port/Source/System/DataModule.cpp	2026-09-27 22:08:10
-@@ -4,6 +4,10 @@
++++ port/Source/System/DataModule.cpp	2026-09-27 22:31:14
+@@ -4,6 +4,9 @@
  #include "LuaMan.h"
  #include "GameVersion.h"
  #include "System.h"
 +#ifdef __EMSCRIPTEN__
-+#include "ConsoleMan.h"
 +#include <cstdio>
 +#endif
  
  #include <System/Semver200/semver200.h>
  
-@@ -491,10 +495,25 @@
+@@ -490,11 +493,24 @@
+ 	}
  	return true;
  }
- 
++
 +#ifdef __EMSCRIPTEN__
-+// A mod made for another version of the game loads with a warning in the consoles, not an
-+// assertion (specs/mods.md). Every published mod is made for v6, the released game, and this
-+// development build calls itself v7, so the assertion came at every start, and its default
-+// stopped the game.
++// A mod made for another version of the game loads with a warning in the browser's console,
++// not an assertion; the page's Mods panel says so under the mod (specs/mods.md). Every
++// published mod is made for v6, the released game, and this development build calls itself
++// v7, so the assertion came at every start, and its default stopped the game.
 +#define RTEVersionAssert(expression, description) \
 +	if (!(expression)) { \
-+		const std::string warning = "WARNING: " + (description); \
-+		g_ConsoleMan.PrintString(warning); \
-+		std::fprintf(stderr, "%s\n", warning.c_str()); \
++		std::fprintf(stderr, "WARNING: %s\n", std::string(description).c_str()); \
 +	}
 +#else
 +#define RTEVersionAssert(expression, description) RTEAssert(expression, description)
 +#endif
-+
+ 
  void DataModule::CheckSupportedGameVersion() const {
  	static const std::string contactAuthor = "Please contact the mod author or ask for help in the CCCP discord server.";
  	
@@ -7257,7 +7255,7 @@ diff -ruP --exclude=*.o original/Source/System/DataModule.cpp port/Source/System
  
  	if (!m_SupportedGameVersion) {
  		return;
-@@ -506,16 +525,16 @@
+@@ -506,16 +522,16 @@
  
  	bool modulePrereleaseVersionMismatch = !m_SupportedGameVersion->prerelease().empty();
  	bool moduleBuildVersionMismatch = !m_SupportedGameVersion->build().empty();

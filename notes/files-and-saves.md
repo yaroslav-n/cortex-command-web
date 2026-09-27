@@ -648,7 +648,7 @@ each file to `Mods/` plus its name in the zip, only the extensions in
 `Name.rte` folder there that the Mod Manager has not turned off. `/Mods` is an IDBFS
 mount, so what is unpacked stays across reloads and new builds, like the saves.
 
-**Getting a mod in.** The strip's "Mods" opens a panel (`site/index.html`,
+**Getting a mod in.** The strip's "Manage Mods" opens a panel (`site/index.html`,
 [specs/mods.md](../specs/mods.md)). "Install a mod…" reads the chosen `.zip`'s central
 directory in the page; a zip without `Name.rte/Index.ini` at its top is refused, saying
 why (a mod inside another folder, an `index.ini` spelled otherwise, which the case-
@@ -673,8 +673,14 @@ it failed), the panel offers "Restart the game", which waits for `Module.persist
 v7.0.0, and every mod on mod.io is made for v6 (`SupportedGameVersion = 6.2.2`).
 `DataModule::CheckSupportedGameVersion` asserted on the mismatch: a `confirm` at every
 start ("OK: Abort", the default, stopped the game). In the browser its three checks now
-print "WARNING: …" to the in-game console and the page's console instead
-(`RTEVersionAssert`, at the user's choice, [specs/mods.md](../specs/mods.md)).
+print "WARNING: …" to the browser's console only (`RTEVersionAssert`), and the panel says
+it in grey under the mod ([specs/mods.md](../specs/mods.md), both at the user's choice).
+For that the page reads each mod's `Index.ini` (from the unpacked folder, or inflated from
+a zip not yet unpacked with `DecompressionStream`) and applies the engine's rule to its
+`SupportedGameVersion`: the same version, or the same major one and no later a minor
+one, with no pre-release or build on either side. The game's version reaches the page
+from `c_VersionString` in `GameVersion.h`: CMake puts it in for `@CORTEX_GAME_VERSION@`
+when it copies the page, and configures again when the header changes.
 
 **Sounds.** A mod's sounds are not in `audio/manifest.tsv`, so the audio layer takes
 the path it takes for any unlisted file (`FMOD::System::createSound` reads the header,
