@@ -311,15 +311,31 @@ static unsigned long long HashSimulationState() {
 /// stored preset (Activity::Create(const Activity&) does not copy it), and some
 /// name no Scene at all (Signal Hunt's "Zombie Cave" is a terrain object). The menu
 /// makes the player pick; the parity probe's missions.txt lists working pairs.
-/// @param activityAndScene "<Activity preset>|<Scene preset>".
+///
+/// Given two teams as well, the Activity is set up as the scenario menu's Start Game
+/// sets it up with the menu's defaults (ScenarioActivityConfigGUI::StartGame): player
+/// one on the first team, the CPU on the second (-1 for none), the difficulty slider's
+/// starting value and the gold that goes with it, "-All-" technology, and the
+/// Activity's own defaults for fog of war, a clear path to orbit and deploying units.
+/// A plain run keeps the preset's players and always deploys the Scene's units.
+/// @param activityAndScene "<Activity preset>|<Scene preset>[|<player team>|<CPU team>]".
 static bool SetStartActivityByName(const std::string& activityAndScene) {
-	const size_t separator = activityAndScene.find('|');
-	if (separator == std::string::npos) {
-		std::printf("Simulation: expected \"<Activity>|<Scene>\", got \"%s\"\n", activityAndScene.c_str());
+	std::vector<std::string> fields;
+	for (size_t start = 0;;) {
+		const size_t end = activityAndScene.find('|', start);
+		fields.push_back(activityAndScene.substr(start, end == std::string::npos ? std::string::npos : end - start));
+		if (end == std::string::npos) {
+			break;
+		}
+		start = end + 1;
+	}
+	if (fields.size() != 2 && fields.size() != 4) {
+		std::printf("Simulation: expected \"<Activity>|<Scene>\" or \"<Activity>|<Scene>|<player team>|<CPU team>\", got \"%s\"\n", activityAndScene.c_str());
 		return false;
 	}
-	const std::string presetName = activityAndScene.substr(0, separator);
-	const std::string sceneName = activityAndScene.substr(separator + 1);
+	const std::string& presetName = fields[0];
+	const std::string& sceneName = fields[1];
+	const bool asScenarioMenu = fields.size() == 4;
 	const Entity* preset = g_PresetMan.GetEntityPreset("GAScripted", presetName);
 	if (!preset) {
 		preset = g_PresetMan.GetEntityPreset("GATutorial", presetName);
@@ -334,10 +350,46 @@ static bool SetStartActivityByName(const std::string& activityAndScene) {
 		return false;
 	}
 	g_ActivityMan.SetStartActivity(startActivity);
-	if (GameActivity* gameActivity = dynamic_cast<GameActivity*>(g_ActivityMan.GetStartActivity())) {
+	GameActivity* gameActivity = dynamic_cast<GameActivity*>(g_ActivityMan.GetStartActivity());
+	bool placeUnits = true;
+	if (asScenarioMenu) {
+		if (!gameActivity) {
+			std::printf("Simulation: preset \"%s\" is not a GameActivity, which the scenario menu needs\n", presetName.c_str());
+			return false;
+		}
+		const int playerTeam = std::atoi(fields[2].c_str());
+		const int cpuTeam = std::atoi(fields[3].c_str());
+		// The difficulty slider starts at 50 (Base.rte/GUIs/ScenarioGUI.ini), which picks the
+		// medium gold; UpdateStartingGoldSliderAndLabel falls through to harder gold when an
+		// Activity gives none, and to 2000 when it gives none at all.
+		const int difficulty = 50;
+		int startingGold = 2000;
+		for (int gold: {gameActivity->GetDefaultGoldMediumDifficulty(), gameActivity->GetDefaultGoldHardDifficulty(), gameActivity->GetDefaultGoldNutsDifficulty(), gameActivity->GetDefaultGoldMaxDifficulty()}) {
+			if (gold > -1) {
+				startingGold = gold;
+				break;
+			}
+		}
+		gameActivity->SetDifficulty(difficulty);
+		gameActivity->SetStartingGold(startingGold);
+		gameActivity->SetRequireClearPathToOrbit(gameActivity->GetDefaultRequireClearPathToOrbit() > 0);
+		gameActivity->SetFogOfWarEnabled(gameActivity->GetDefaultFogOfWar() > 0);
+		placeUnits = gameActivity->GetDefaultDeployUnits() > 0;
+		gameActivity->ClearPlayers(false);
+		if (cpuTeam >= Activity::Teams::TeamOne) {
+			gameActivity->SetCPUTeam(cpuTeam);
+		}
+		gameActivity->AddPlayer(Players::PlayerOne, true, playerTeam, 0);
+		for (int team = Activity::Teams::TeamOne; team < Activity::Teams::MaxTeamCount; ++team) {
+			gameActivity->SetTeamTech(team, "-All-");
+			gameActivity->SetTeamAISkill(team, Activity::AISkillSetting::DefaultSkill);
+		}
+		std::printf("Simulation: as the scenario menu starts it: player team %d, CPU team %d, difficulty %d, gold %d, deploy units %s\n",
+		            playerTeam, cpuTeam, difficulty, startingGold, placeUnits ? "on" : "off");
+	} else if (gameActivity) {
 		gameActivity->SetStartingGold(10000);
 	}
-	if (g_SceneMan.SetSceneToLoad(sceneName) < 0) {
+	if (g_SceneMan.SetSceneToLoad(sceneName, true, placeUnits) < 0) {
 		std::printf("Simulation: no Scene named \"%s\"\n", sceneName.c_str());
 		return false;
 	}
@@ -417,6 +469,24 @@ static bool RunDeterministicSimulation(int steps) {
 	std::printf("Simulation: %d steps, parallel mask %u, %d objects, state hash %016llx, RNG %llu draws hash %016llx\n",
 	            steps, System::GetParallelPhaseMask(), g_MovableMan.GetMOIDCount(), HashSimulationState(),
 	            draws, streamHash);
+
+	// What became of the Activity: one that ended by itself, with no one playing, or
+	// never got going shows here, and so does a team left without a brain.
+	if (const Activity* activity = g_ActivityMan.GetActivity()) {
+		static const char* const stateNames[] = {"not started", "starting", "editing", "pre-game", "running", "has an error", "over"};
+		const int state = activity->GetActivityState();
+		std::string brains;
+		for (int team = Activity::Teams::TeamOne; team < Activity::Teams::MaxTeamCount; ++team) {
+			if (activity->TeamActive(team)) {
+				brains += std::string(brains.empty() ? "" : ", ") + "team " + std::to_string(team) + (g_MovableMan.GetFirstBrainActor(team) ? " yes" : " no");
+			}
+		}
+		const GameActivity* gameActivity = dynamic_cast<const GameActivity*>(activity);
+		const int winner = gameActivity ? gameActivity->GetWinnerTeam() : Activity::Teams::NoTeam;
+		std::printf("Simulation activity: %s, winner %s, brains: %s\n",
+		            state >= 0 && state < static_cast<int>(std::size(stateNames)) ? stateNames[state] : "none",
+		            winner == Activity::Teams::NoTeam ? "none" : ("team " + std::to_string(winner)).c_str(), brains.c_str());
+	}
 	return true;
 }
 

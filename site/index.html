@@ -445,11 +445,14 @@ function startGame() {
   const simulate = query.get('simulate');
   const parallel = query.get('parallel');
   const activity = query.get('simulate-activity');
-  const argv = activity ? ['-simulate-activity', activity, simulate || '600', ...(parallel ? [parallel] : [])]
-    : simulate ? ['-simulate-tutorial', simulate, ...(parallel ? [parallel] : [])]
+  // ?debug prints the engine's console (Lua errors among it) to the page's output, in a
+  // simulation run too.
+  const cout = query.has('debug') ? ['-cout'] : [];
+  const argv = activity ? ['-simulate-activity', activity, simulate || '600', ...(parallel ? [parallel] : []), ...cout]
+    : simulate ? ['-simulate-tutorial', simulate, ...(parallel ? [parallel] : []), ...cout]
     : world ? ['-dump-scene-world', world]
     : dump ? ['-dump-scene-preview', dump]
-    : query.has('debug') ? ['-cout'] : [];
+    : cout;
   try {
     const running = Module.callMain(argv);
     if (running && running.catch) running.catch((error) => failure(describeError(error)));

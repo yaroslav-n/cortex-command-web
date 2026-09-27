@@ -1,6 +1,6 @@
 # Running and observing the browser game
 
-Updated 2026-09-25. Entry points: `tools/run-checks.mjs`, `tests/check-report.js`,
+Updated 2026-09-27. Entry points: `tools/run-checks.mjs`, `tests/check-report.js`,
 `tests/golden/`, `.github/workflows/ci.yml`, `tools/browser_driver.mjs`,
 `tools/cc.sh`, `serve.py`, `site/index.html`.
 
@@ -13,7 +13,7 @@ node tools/run-checks.mjs           # --list, --only a,b, --angle metal, --chrom
 
 `run-checks.mjs` serves `dist/` itself with the cross-origin isolation headers,
 starts its own headless Chrome with a fresh temporary profile at a fixed
-1280×720 window, and runs forty checks in about two and a half minutes on a
+1280×720 window, and runs forty-three checks in about two and a half minutes on a
 12-CPU Mac (about 30 s of it the two sound download checks that go through a bad
 network, and a little over a minute the checks that break the game's own download):
 
@@ -60,9 +60,13 @@ network, and a little over a minute the checks that break the game's own downloa
   state, two calls a step). With it shown (`simulate-overlay-shown`, the Zero-G run
   with `?perf-debug`), every counter but the particles' (the mission has next to no
   particles) and those two calls must have been timed, and the result must be the
-  same; last, `mods` installs a small mod made for v6.2.2 (a zip the runner writes)
-  from the strip's Mods panel after refusing a zip with no mod in it and one whose
-  `index.ini` is not spelled `Index.ini`, starts the game,
+  same; Bunker Breach on Vesod Fortress, set up as the scenario menu starts it, must
+  still be running three seconds in with the defenders' brain in place and no error in
+  the engine's console, which `&debug` prints to the page, the player attacking
+  (`bunker-breach-attack`) and defending (`bunker-breach-defend`; see
+  [activities](activities.md)); last, `mods` installs a small mod made for v6.2.2 (a
+  zip the runner writes) from the strip's Mods panel after refusing a zip with no mod
+  in it and one whose `index.ini` is not spelled `Index.ini`, starts the game,
   which must unpack and load it with a warning and no dialog, and removes it from the
   panel while the game runs (see [files and saves](files-and-saves.md));
 - **the game's download** — the runner's own server answers `Range` requests as a
@@ -505,6 +509,21 @@ object count and random stream), in two builds whose simulation code was the sam
 Its many bunker automovers run their scripts in the master Lua state too, and those
 iterate tables keyed by objects, whose order follows heap addresses; that is the
 likely cause, not a confirmed one. Do not record its hash.
+
+A plain run keeps the preset's own players (player one alone, on the first team, no
+CPU) and always deploys the Scene's units, which is not how anyone plays it.
+`"<Activity>|<Scene>|<player team>|<CPU team>"` sets the Activity up as the scenario
+menu's Start Game does with the menu's defaults: player one on the first team, the
+CPU on the second (`-1` for none), the difficulty slider's starting 50 and the gold
+that goes with it, "-All-" technology, and the Activity's own defaults for fog of war,
+a clear path to orbit and deploying units. After any run the harness prints what
+became of the Activity, for instance `Simulation activity: running, winner none,
+brains: team 0 yes, team 1 yes` (state, winning team, and whether each active team
+has a brain). Add `&debug` to see the engine's console in the page's output, Lua
+errors included, as `-cout` does natively. Sweeping every Bunker Breach site with
+it, both ways round, is how the fortresses' missing brain was found out and checked
+fixed, and, played on for 100 s, how the ladders' Lua error turned up
+([activities](activities.md)).
 
 The harness drains both thread pools before hashing, because `GetMOIDCount` reads
 an index that a pool thread rebuilds. Without that it reports 84, 38 and 4 objects
