@@ -254,6 +254,30 @@ const CHECKS = [
     alsoExpect: [/^Performance counters \(microseconds per step\): Total [1-9][0-9]*, Act AI [1-9][0-9]*, Act Travel [1-9][0-9]*, Act Update [1-9][0-9]*, Prt Travel [0-9]+, Prt Update [0-9]+, Activity [1-9][0-9]*, Scripts [1-9][0-9]*; master state scripts: 2 calls, [1-9][0-9]* microseconds$/],
     timeoutMs: 300000,
   },
+  {
+    // Bunker Breach on a fortress, set up as the scenario menu starts it, the player
+    // attacking. A fortress has no "Brain" area: the defenders' brain is the one its brain
+    // chambers deploy, so when the menu did not deploy units the attackers won at the
+    // first check, a second in (Base.rte/Activities.ini). Three seconds are played.
+    // With ?debug the engine's console reaches the page too, and no line of it may be an
+    // error, a script's among them.
+    name: 'bunker-breach-attack',
+    game: '?simulate-activity=Bunker%20Breach%7CVesod%20Fortress%7C0%7C1&simulate=180&parallel=0&debug',
+    expect: /^Simulation activity: running, winner none, brains: team 0 yes, team 1 yes$/,
+    result: /^Simulation (activity|dump): /,
+    verify: consoleHasNoError,
+    timeoutMs: 300000,
+  },
+  {
+    // The same, the player defending: with no brain to give them the Activity did not start.
+    // The CPU attacks with no brain of its own, as it always does in Bunker Breach.
+    name: 'bunker-breach-defend',
+    game: '?simulate-activity=Bunker%20Breach%7CVesod%20Fortress%7C1%7C0&simulate=180&parallel=0&debug',
+    expect: /^Simulation activity: running, winner none, brains: team 0 no, team 1 yes$/,
+    result: /^Simulation (activity|dump): /,
+    verify: consoleHasNoError,
+    timeoutMs: 300000,
+  },
   // The sound files through a bad network, each from the network rather than the cache
   // (these two empty it). The page's timeouts are shortened for them: a download that
   // receives nothing for 4 s is dropped, and the page stops waiting for missing files
@@ -302,6 +326,12 @@ function resumed(requests) {
   if (!second || second.status !== 206 || !(second.start > 0)) return `not resumed: ${JSON.stringify(requestsFor(requests, '/cortex.data'))}`;
   if (second.ifRange !== first.etag) return `resumed with If-Range ${second.ifRange}, not ${first.etag}`;
   return '';
+}
+// No line of the engine's console (on the page's with ?debug) is an error. -cout colours
+// the word, so it is looked for anywhere in the line.
+function consoleHasNoError(requests, tab) {
+  const error = tab.lines.find((line) => /ERROR:/.test(line));
+  return error ? `the console says: ${error.replace(/\x1b\[[0-9;]*m/g, '').trim()}` : '';
 }
 
 function parseArguments(argv) {

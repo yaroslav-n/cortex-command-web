@@ -1,6 +1,6 @@
 # Activities and restart lifecycle
 
-Updated 2026-09-24.
+Updated 2026-09-27.
 
 Entry points: `engine/Source/Managers/ActivityMan.cpp` / `.h`,
 `engine/Source/Activities/` (`GameActivity`, `GATutorial`, `GAScripted`),
@@ -111,6 +111,61 @@ mission state lives in the activity's own save hooks. See
   rendered; saved through the pause menu; a **freshly initialised** game instance
   discovered and loaded that save and resumed with brain, fog, objective and funds
   intact.
+- **Bunker Breach, every site**: all 33 sites, the player attacking and defending,
+  set up as the scenario menu starts them (below).
+
+## Bunker Breach and the fortresses' brain
+
+Reported: Bunker Breach on Vesod Fortress was won the moment it started. The
+attackers win when the defenders have no brain (`BunkerBreach.lua`,
+`CheckWinConditions`, first run a second in). `SetupDefenderBrains` makes the
+defenders' brain itself on a site with a "Brain" area; otherwise it takes the one the
+site deployed. Four of the 33 sites Bunker Breach offers have no "Brain" area — Forest,
+Mountain, Tundra and Vesod Fortress — and their brain is an Infantry Brain placed by a
+brain chamber's bunker assembly, which is a deployment: the Scene deploys it only
+when the scenario menu's "Deploy units" is ticked (`SceneMan::SetSceneToLoad`'s
+`placeUnits`; `Scene::LoadData` adds an assembly's deployments only then).
+
+Upstream's development branch made that box a choice and left it unticked for Bunker
+Breach (d16b03689, May 2024); v6.2.2 always deployed, the box ticked and locked. Left
+unticked, the script found no brain: LuaJIT's `math.random(1, 0)` returns 1 rather
+than raising, so it chose `nil` without an error, and the attackers won at the first
+check. A player defending met `BunkerBreach.lua:131: attempt to index local
+'brainToAssignToPlayer' (a nil value)`, and the Activity did not start. The code is
+upstream's unchanged, so upstream's latest (still `20dfb3ea5` on 2026-09-27) does the
+same. The parity probe never showed it: `LaunchIntoActivity` always deploys.
+
+`Base.rte/Activities.ini` now gives Bunker Breach v6.2.2's settings back
+(`DefaultDeployUnits = 1`, `DeployUnitsSwitchEnabled = 0`). On the other 29 sites
+the box made no difference: they have "Brain" and "… Defenders" areas, and the script
+deletes whatever the site deployed and puts its own defenders there. A fortress
+deploys its whole garrison as well, as it was designed to.
+
+Checked with the simulation harness set up as the menu does
+(`?simulate-activity=Bunker%20Breach%7C<Scene>%7C<player team>%7C<CPU team>`; see
+[testing](testing.md)), all 33 sites, the player attacking the CPU and defending
+against it. Before: the four fortresses ended at once in the attackers' win, or did
+not start, and the other 29 ran. After: all 66 were still running 15 s in with each
+brain in place (the CPU attacks with no brain of its own, as Bunker Breach always
+has it), with no Lua error. Through the real menu on Vesod Fortress, the box showed
+ticked and a click did not untick it; 35 s in, the defenders' Brain Robot stood in the
+left brain chamber at (1224, 1263) among 32 defending actors. `bunker-breach-attack`
+and `bunker-breach-defend` check Vesod Fortress both ways.
+
+Played on for 100 s (6000 steps), one game raised a Lua error: Grasslands Mining
+Outpost, the player defending, where the CPU's soldiers on the bunker's ladders hit
+`LadderNode.lua:24: attempt to call method 'GetLimbPathSpeed' (a nil value)` 14 times.
+Upstream renamed that function `GetLimbPathTravelSpeed` (f610ea655, September 2024)
+and missed both ladder scripts, so on any site a soldier moving on a ladder was not
+carried up or along it. They now ask for `GetLimbPathTravelSpeed(Actor.WALK)`, the
+replacement upstream made in Imperatus's `Robot.lua` ([parity](parity.md)). That
+game run serially (`&parallel=0`) raised the error 11 times, first between steps 3600
+and 4800, and ended in the same state twice (257 objects); with the fix it raised
+none and again ended the same twice, in another state (292 objects), the ladders now
+moving the soldiers the error used to stop. With both fixes all 66 games played 100 s
+with no Lua error: the 33 defended were still running; of the 33 attacked, 8 were and
+25 had ended as a game left alone does, the defenders killing the idle attacker's
+brain (in the first 15 s every brain had lived).
 
 ## Conquest (the campaign)
 

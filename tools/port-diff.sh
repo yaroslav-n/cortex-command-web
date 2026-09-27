@@ -11,12 +11,14 @@ OUT="$ROOT/engine/PORT-CHANGES.patch"
 cd "$(dirname "$ORIGINAL")"
 REF=$(basename "$ORIGINAL")
 # Of the game's data, the port changes only shaders, GUI layouts and skins (the
-# factions' buy menu skins among them), and the Generic Actor Spawner, which it keeps
-# out of the editors' object list.
+# factions' buy menu skins among them), the Generic Actor Spawner, which it keeps
+# out of the editors' object list, Bunker Breach's settings in Activities.ini, and the
+# ladders' scripts, which call a function upstream renamed.
 for part in Source Resources external meson.build meson_options.txt Data/Base.rte/Shaders Data/Base.rte/GUIs \
     Data/Browncoats.rte/GUIs Data/Dummy.rte/GUIs Data/Imperatus.rte/GUIs Data/Ronin.rte/GUIs \
     Data/Techion.rte/GUIs Data/Uzira.rte/GUIs \
-    Data/Base.rte/Scenes/Objects/Bunkers/BunkerSystems/ActorSpawner; do
+    Data/Base.rte/Scenes/Objects/Bunkers/BunkerSystems/ActorSpawner Data/Base.rte/Activities.ini \
+    Data/Base.rte/Scenes/Objects/Bunkers/BunkerSystems/Ladders; do
   # diff exits 1 when files differ; that is the expected case here.
   # Framework symlink loops in vendored Xcode projects make diff complain; noise.
   # -P shows files the port added in full, and reports files the port removed as
@@ -28,6 +30,6 @@ for part in Source Resources external meson.build meson_options.txt Data/Base.rt
           -e "s#^--- $REF/#--- original/#" -e "s#^+++ $ROOT/engine/#+++ port/#" \
           -e "s#^Only in $REF/#Only in original/#" -e "s#^Only in $ROOT/engine/#Only in port/#" >> "$OUT" || true
 done
-echo "files changed or added: $(grep -c '^diff -ruP' "$OUT")"
+echo "files changed or added: $(grep -c '^+++ port/' "$OUT")"
 echo "files or directories removed: $(grep -c '^Only in original/' "$OUT")"
 echo "lines: $(wc -l < "$OUT" | tr -d ' ')"
