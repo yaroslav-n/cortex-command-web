@@ -18,16 +18,18 @@
 //     fetches after the start arrives, even through a bad network, and the
 //     deterministic simulation harness reproduces its recorded state hashes, with
 //     the performance overlay hidden and shown; its counters and the master Lua
-//     state's script timings record only while it is shown.
+//     state's script timings record only while it is shown; a mod installed from the
+//     strip's Mods panel is unpacked and loaded as the game starts, and removed there.
 // --log prints each check's page output, which otherwise shows only on failure.
 // Build first: ./build.sh --target checks. Exit status is 0 only if every check passed.
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { createReadStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { crc32 } from 'node:zlib';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -272,6 +274,10 @@ const CHECKS = [
     game: '?simulate=30&parallel=0&sound-file-timeouts=20,10',
     timeoutMs: 120000,
   },
+  // Mods, from the strip (specs/mods.md): a .zip that holds none is refused; one that does is
+  // kept, unpacked and loaded as the game starts, a mod made for another game version with a
+  // warning and no dialog; and the panel removes it. Last, so no other check has the mod.
+  { name: 'mods', mods: true },
 ];
 
 const requestsFor = (requests, path) => requests.filter((request) => request.path === path);
@@ -696,6 +702,7 @@ async function runStartScreen(connection, base, check) {
         links: [...document.querySelectorAll('#bar a')].map((link) => link.hostname + link.pathname + ' ' + link.target + (link.querySelector('svg') ? ' icon' : '')),
         names: [...document.querySelectorAll('#bar a')].map((link) => link.textContent).join(' | '),
         hint: document.getElementById('fullscreen-hint').textContent,
+        mods: document.getElementById('mods').textContent + (document.querySelector('#mods svg') ? ' icon' : ''),
         bar: document.getElementById('bar').getBoundingClientRect().height,
         game: document.getElementById('game').getBoundingClientRect().height,
         window: innerHeight })`));
@@ -703,7 +710,7 @@ async function runStartScreen(connection, base, check) {
       const expected = 'github.com/yaroslav-n/cortex-command-web _blank icon, github.com/cortex-command-community/Cortex-Command-Community-Project _blank icon, '
         + 'github.com/yaroslav-n/cortex-command-web/issues/new _blank icon';
       if (links !== expected || strip.names !== 'Cortex Command Web | Cortex Command Community Project | Submit a bug' ||
-        strip.hint !== 'Open fullscreen by pressing Ctrl + F' ||
+        strip.hint !== 'Open fullscreen by pressing Ctrl + F' || strip.mods !== 'Mods icon' ||
         strip.bar !== 50 || strip.game !== strip.window - 50) {
         return { status: 'fail', detail: `the strip under the game is not as expected: ${JSON.stringify(strip)}`, lines: tab.lines };
       }
@@ -728,7 +735,7 @@ async function runStartScreen(connection, base, check) {
       }
     }
     const text = await tab.evaluate("document.getElementById('status').textContent");
-    return { status: 'pass', detail: `${label || text} (${(bytes / 1e6).toFixed(2)} MB fetched)${check.start.strip ? ', strip under the game, Ctrl+F fullscreen, link preview' : ''}`, lines: tab.lines };
+    return { status: 'pass', detail: `${label || text} (${(bytes / 1e6).toFixed(2)} MB fetched)${check.start.strip ? ', strip under the game with Mods, Ctrl+F fullscreen, link preview' : ''}`, lines: tab.lines };
   });
 }
 
@@ -814,6 +821,121 @@ async function waitForLine(tab, pattern, timeoutMs) {
     await sleep(250);
   }
   return undefined;
+}
+
+// A zip that stores its files as they are, as a mod's .zip may.
+function storedZip(files) {
+  const parts = [];
+  const directory = [];
+  let offset = 0;
+  for (const [name, text] of Object.entries(files)) {
+    const path = Buffer.from(name);
+    const data = Buffer.from(text);
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt32LE(crc32(data), 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(path.length, 26);
+    const entry = Buffer.alloc(46);
+    entry.writeUInt32LE(0x02014b50, 0);
+    entry.writeUInt16LE(20, 4);
+    entry.writeUInt16LE(20, 6);
+    entry.writeUInt32LE(crc32(data), 16);
+    entry.writeUInt32LE(data.length, 20);
+    entry.writeUInt32LE(data.length, 24);
+    entry.writeUInt16LE(path.length, 28);
+    entry.writeUInt32LE(offset, 42);
+    parts.push(local, path, data);
+    directory.push(entry, path);
+    offset += local.length + path.length + data.length;
+  }
+  const central = Buffer.concat(directory);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(directory.length / 2, 8);
+  end.writeUInt16LE(directory.length / 2, 10);
+  end.writeUInt32LE(central.length, 12);
+  end.writeUInt32LE(offset, 16);
+  return Buffer.concat([...parts, central, end]);
+}
+
+// The keys of the store IDBFS keeps /Mods in (runtime/filesystem.js), as JSON.
+const MOD_KEYS = `new Promise((resolve, reject) => {
+  const opened = indexedDB.open('/Mods', 21);
+  opened.onerror = () => reject(opened.error);
+  opened.onsuccess = () => {
+    const keys = opened.result.transaction('FILE_DATA').objectStore('FILE_DATA').getAllKeys();
+    keys.onsuccess = () => { opened.result.close(); resolve(JSON.stringify(keys.result)); };
+  };
+})`;
+
+// The strip's Mods panel before the game starts and while it runs (site/index.html).
+async function runMods(connection, base) {
+  const folder = mkdtempSync(join(tmpdir(), 'cortex-mods-'));
+  const mod = join(folder, 'web-check.zip');
+  const notMod = join(folder, 'no-mod.zip');
+  writeFileSync(mod, storedZip({ 'WebCheck.rte/Index.ini': 'DataModule\n\tModuleName = Web Check\n\tSupportedGameVersion = 6.2.2\n' }));
+  writeFileSync(notMod, storedZip({ 'readme.txt': 'not a mod' }));
+  const lowerCase = join(folder, 'lower-case.zip');
+  writeFileSync(lowerCase, storedZip({ 'LowerCase.rte/index.ini': 'DataModule\n\tModuleName = Lower Case\n' }));
+  try {
+    return await withTab(connection, async (tab) => {
+      const fail = (detail) => ({ status: 'fail', detail, lines: tab.lines });
+      const text = (id) => tab.evaluate(`document.getElementById('${id}').textContent`);
+      // A file chosen in the panel's file picker; gives what the panel then says.
+      const choose = async (path) => {
+        await tab.evaluate("document.getElementById('mod-message').textContent = ''");
+        const { root } = await tab.send('DOM.getDocument');
+        const { nodeId } = await tab.send('DOM.querySelector', { nodeId: root.nodeId, selector: '#mod-file' });
+        await tab.send('DOM.setFileInputFiles', { nodeId, files: [path] });
+        return waitFor(tab, "document.getElementById('mod-message').textContent", 10000);
+      };
+      await tab.send('Page.navigate', { url: `${base}/index.html` });
+      if (!(await waitFor(tab, "document.body.dataset.state === 'offer-play'", 60000))) return fail('the page offered no game');
+      await tab.evaluate("document.getElementById('mods').click()");
+      if (!(await waitFor(tab, "document.getElementById('mod-list').textContent === 'No mods installed.'", 10000))) return fail(`the panel lists "${await text('mod-list')}"`);
+      try {
+        const refused = await choose(notMod);
+        if (!/^no-mod\.zip has no mod in it/.test(refused)) return fail(`a zip with no mod in it: "${refused}"`);
+        // The browser's files are case sensitive: index.ini is not Index.ini.
+        const misspelled = await choose(lowerCase);
+        if (misspelled !== 'lower-case.zip has LowerCase.rte/index.ini, where the game needs LowerCase.rte/Index.ini, spelled just so.') return fail(`a mod with index.ini: "${misspelled}"`);
+        const installed = await choose(mod);
+        if (installed !== 'Installed WebCheck.rte. The game loads it when it starts.') return fail(`the mod's zip: "${installed}"`);
+        if ((await text('mod-list')) !== 'WebCheck.rteunpacked when the game startsRemove') return fail(`the panel lists "${await text('mod-list')}"`);
+        // The game unpacks it and loads it as it starts; made for v6, it says so in the
+        // console, and asks nothing.
+        await tab.evaluate("document.getElementById('mod-close').click(); document.getElementById('start').click()");
+        if (!(await waitForLine(tab, /^Browser menu: entered$/, 240000))) return fail('the game never reached its menu');
+        if (!tab.lines.some((line) => /^WARNING: WebCheck\.rte was developed for Cortex Command v6\.2\.2,/.test(line))) return fail('no warning that the mod was made for v6.2.2');
+        const dialog = tab.lines.find((line) => line.startsWith('DIALOG'));
+        if (dialog) return fail(`the game asked: ${dialog}`);
+        // What it unpacked reaches IndexedDB with the game's next flush, and the zip is gone.
+        const unpacked = await waitFor(tab, `${MOD_KEYS}.then((keys) => JSON.parse(keys).includes('/Mods/WebCheck.rte/Index.ini') && !keys.includes('.zip') && keys)`, 20000);
+        if (!unpacked) return fail(`/Mods holds ${await tab.evaluate(MOD_KEYS)}`);
+        // Removed while the game runs, for its next start.
+        await tab.evaluate("document.getElementById('mods').click()");
+        if (!(await waitFor(tab, "document.getElementById('mod-list').textContent === 'WebCheck.rteRemove'", 10000))) return fail(`the running game's panel lists "${await text('mod-list')}"`);
+        await tab.evaluate("document.getElementById('mod-message').textContent = ''; document.querySelector('#mod-list button').click()");
+        const removed = await waitFor(tab, "document.getElementById('mod-message').textContent", 10000);
+        if (removed !== 'Removed WebCheck.rte. The game goes on without it the next time it starts.') return fail(`removing it: "${removed}"`);
+        if (await tab.evaluate("document.getElementById('mod-restart').hidden")) return fail('no "Restart the game" after removing a mod from the running game');
+        const left = await tab.evaluate(MOD_KEYS);
+        if (left !== '[]') return fail(`/Mods still holds ${left}`);
+        return { status: 'pass', detail: 'zips with no mod or an index.ini refused; the mod unpacked, loaded with a warning and no dialog, and removed', lines: tab.lines };
+      } finally {
+        await tab.evaluate(`new Promise((resolve) => {
+          const opened = indexedDB.open('/Mods', 21);
+          opened.onsuccess = () => { const clearing = opened.result.transaction('FILE_DATA', 'readwrite'); clearing.objectStore('FILE_DATA').clear(); clearing.oncomplete = () => resolve(true); };
+          opened.onerror = () => resolve(false);
+        })`).catch(() => {});
+      }
+    });
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
 }
 
 // The sound files downloaded through a bad network (check.faults: badNetwork or
@@ -938,6 +1060,7 @@ async function main() {
         else if (check.start) result = await runStartScreen(connection, base, check);
         else if (check.node) result = await runNode(options.dist, check);
         else if (check.faults) result = await runSoundFaults(connection, base, server, options.dist, check);
+        else if (check.mods) result = await runMods(connection, base);
         else result = await runGame(connection, base, check, traffic);
       } catch (error) {
         result = { status: 'fail', detail: String(error.message || error) };
