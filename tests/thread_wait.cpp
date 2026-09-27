@@ -3,6 +3,7 @@
 // Checked against the real BS::multi_future::wait and RTE::BrowserCooperativeYield.
 #include "BS_thread_pool.hpp"
 #include "System.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -68,14 +69,27 @@ static int Run() {
 
 	// Work that calls back into the main thread (stdout is proxied there) must not
 	// have to wait for an event loop return: the wait itself services those calls.
-	RTE::BrowserNoteEventLoopTurn();
-	const Clock::time_point proxiedStart = Clock::now();
-	BS::multi_future<void> proxied;
-	for (int i = 0; i < 4; ++i) proxied.push_back(pool.submit([i] { std::printf("worker line %d\n", i); }));
-	proxied.wait();
-	const double proxiedMs = MillisecondsSince(proxiedStart);
+	// A wait that did not would take every round at least the 16 ms after which it
+	// returns to the event loop. A busy machine makes one round as slow now and then
+	// (GitHub's shared runner took 13.7, 19.3 and 50 ms), but only adds time, so the
+	// fastest round is judged.
+	constexpr int proxiedRounds = 5;
+	double proxiedRoundMs[proxiedRounds];
+	double proxiedMs = 0.0;
+	for (int round = 0; round < proxiedRounds; ++round) {
+		RTE::BrowserNoteEventLoopTurn();
+		const Clock::time_point proxiedStart = Clock::now();
+		BS::multi_future<void> proxied;
+		for (int i = 0; i < 4; ++i) proxied.push_back(pool.submit([round, i] { std::printf("worker line %d.%d\n", round, i); }));
+		proxied.wait();
+		proxiedRoundMs[round] = MillisecondsSince(proxiedStart);
+		proxiedMs = round == 0 ? proxiedRoundMs[0] : std::min(proxiedMs, proxiedRoundMs[round]);
+	}
+	std::printf("proxied call rounds:");
+	for (double roundMs: proxiedRoundMs) std::printf(" %.1f ms", roundMs);
+	std::printf("\n");
 	if (proxiedMs > 12.0) {
-		std::printf("FAIL proxied calls took %.1f ms to be serviced during a wait\n", proxiedMs);
+		std::printf("FAIL proxied calls took %.1f ms to be serviced during a wait, in the fastest of %d rounds\n", proxiedMs, proxiedRounds);
 		return 3;
 	}
 
@@ -102,7 +116,7 @@ static int Run() {
 	workerWait.wait();
 
 	std::printf("PASS 20 short waits in %.1f ms with no event loop return; long wait let %d timer ticks through in %d returns; "
-	            "proxied calls serviced in %.1f ms; empty, deferred, exception and worker-side waits\n",
+	            "proxied calls serviced in %.1f ms (fastest round); empty, deferred, exception and worker-side waits\n",
 	            quickMs, ticks, yields, proxiedMs);
 	return 0;
 }
