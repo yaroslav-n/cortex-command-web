@@ -30,8 +30,8 @@ network, and a little over a minute the checks that break the game's own downloa
   must print exactly `tests/golden/`. The random contract's golden is also what the
   original's own generator (libstdc++, built with g++-13) prints;
 - **the game** — its start screen fetches none of it until asked and offers "Play
-  Game", and shows the strip under the game (the credit and its two GitHub links,
-  the bug link and the Ctrl+F note), with the game's area 50 px shorter than the
+  Game", and shows the strip under the game ("Mods", the credit and its two GitHub
+  links, the bug link and the Ctrl+F note), with the game's area 50 px shorter than the
   window; Ctrl+F, sent as key events, must then put the game's area in fullscreen
   (`start-screen`); a browser without JSPI is told so and fetches nothing
   (`start-screen-no-jspi`); it boots to the main menu; the 21 transparency tables it
@@ -60,7 +60,11 @@ network, and a little over a minute the checks that break the game's own downloa
   state, two calls a step). With it shown (`simulate-overlay-shown`, the Zero-G run
   with `?perf-debug`), every counter but the particles' (the mission has next to no
   particles) and those two calls must have been timed, and the result must be the
-  same;
+  same; last, `mods` installs a small mod made for v6.2.2 (a zip the runner writes)
+  from the strip's Mods panel after refusing a zip with no mod in it and one whose
+  `index.ini` is not spelled `Index.ini`, starts the game,
+  which must unpack and load it with a warning and no dialog, and removes it from the
+  panel while the game runs (see [files and saves](files-and-saves.md));
 - **the game's download** — the runner's own server answers `Range` requests as a
   host does (206, with an `ETag`, honouring `If-Range`; 416 when nothing is left), and
   a check can break the game's requests there (`FAULTS`), in the middle of a body too,

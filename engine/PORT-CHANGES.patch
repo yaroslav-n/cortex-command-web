@@ -7216,6 +7216,67 @@ diff -ruP --exclude=*.o original/Source/System/ContentFile.cpp port/Source/Syste
  	}
  	SDL_DestroySurface(image);
  
+diff -ruP --exclude=*.o original/Source/System/DataModule.cpp port/Source/System/DataModule.cpp
+--- original/Source/System/DataModule.cpp	2026-09-24 10:48:59
++++ port/Source/System/DataModule.cpp	2026-09-27 22:08:10
+@@ -4,6 +4,10 @@
+ #include "LuaMan.h"
+ #include "GameVersion.h"
+ #include "System.h"
++#ifdef __EMSCRIPTEN__
++#include "ConsoleMan.h"
++#include <cstdio>
++#endif
+ 
+ #include <System/Semver200/semver200.h>
+ 
+@@ -491,10 +495,25 @@
+ 	return true;
+ }
+ 
++#ifdef __EMSCRIPTEN__
++// A mod made for another version of the game loads with a warning in the consoles, not an
++// assertion (specs/mods.md). Every published mod is made for v6, the released game, and this
++// development build calls itself v7, so the assertion came at every start, and its default
++// stopped the game.
++#define RTEVersionAssert(expression, description) \
++	if (!(expression)) { \
++		const std::string warning = "WARNING: " + (description); \
++		g_ConsoleMan.PrintString(warning); \
++		std::fprintf(stderr, "%s\n", warning.c_str()); \
++	}
++#else
++#define RTEVersionAssert(expression, description) RTEAssert(expression, description)
++#endif
++
+ void DataModule::CheckSupportedGameVersion() const {
+ 	static const std::string contactAuthor = "Please contact the mod author or ask for help in the CCCP discord server.";
+ 	
+-	RTEAssert(m_SupportedGameVersion, m_FileName + " does not specify a supported Cortex Command version, so it is not compatible with this version of Cortex Command (" + c_GameVersion.str() + ")\n\n" + contactAuthor);
++	RTEVersionAssert(m_SupportedGameVersion, m_FileName + " does not specify a supported Cortex Command version, so it is not compatible with this version of Cortex Command (" + c_GameVersion.str() + ")\n\n" + contactAuthor);
+ 
+ 	if (!m_SupportedGameVersion) {
+ 		return;
+@@ -506,16 +525,16 @@
+ 
+ 	bool modulePrereleaseVersionMismatch = !m_SupportedGameVersion->prerelease().empty();
+ 	bool moduleBuildVersionMismatch = !m_SupportedGameVersion->build().empty();
+-	RTEAssert(!modulePrereleaseVersionMismatch && !moduleBuildVersionMismatch, m_FileName + " was developed for pre-release build of Cortex Command v" + m_SupportedGameVersion->str() + ", so this game version (v" + c_GameVersion.str() + ") may not support it.\n\n" + contactAuthor);
++	RTEVersionAssert(!modulePrereleaseVersionMismatch && !moduleBuildVersionMismatch, m_FileName + " was developed for pre-release build of Cortex Command v" + m_SupportedGameVersion->str() + ", so this game version (v" + c_GameVersion.str() + ") may not support it.\n\n" + contactAuthor);
+ 
+ 	bool gamePrereleaseVersionMismatch = !c_GameVersion.prerelease().empty();
+ 	bool gameBuildVersionMismatch = !c_GameVersion.build().empty();
+-	RTEAssert(!gamePrereleaseVersionMismatch && !gameBuildVersionMismatch, m_FileName + " was developed for Cortex Command v" + m_SupportedGameVersion->str() + ", so this pre-release version of the game (v" + c_GameVersion.str() + ") may not support it.\n\n" + contactAuthor);
++	RTEVersionAssert(!gamePrereleaseVersionMismatch && !gameBuildVersionMismatch, m_FileName + " was developed for Cortex Command v" + m_SupportedGameVersion->str() + ", so this pre-release version of the game (v" + c_GameVersion.str() + ") may not support it.\n\n" + contactAuthor);
+ 
+ 	// Game engine is the same major version as the Module
+ 	bool majorVersionMatch = c_GameVersion.major() == m_SupportedGameVersion->major();
+ 	// Game engine is at least the minor version the Module requires (allow patch mismatch)
+ 	bool minorVersionInRange = m_SupportedGameVersion->inc_minor() <= c_GameVersion.inc_minor();
+ 
+-	RTEAssert(majorVersionMatch && minorVersionInRange, m_FileName + " was developed for Cortex Command v" + m_SupportedGameVersion->str() + ", so this version of Cortex Command (v" + c_GameVersion.str() + ") may not support it.\n\n" + contactAuthor);
++	RTEVersionAssert(majorVersionMatch && minorVersionInRange, m_FileName + " was developed for Cortex Command v" + m_SupportedGameVersion->str() + ", so this version of Cortex Command (v" + c_GameVersion.str() + ") may not support it.\n\n" + contactAuthor);
+ }
 diff -ruP --exclude=*.o original/Source/System/FloatMath.h port/Source/System/FloatMath.h
 --- original/Source/System/FloatMath.h	1970-01-01 10:00:00
 +++ port/Source/System/FloatMath.h	2026-09-24 11:46:28

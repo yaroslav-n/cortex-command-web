@@ -1,6 +1,6 @@
 # Assets, files and saves
 
-Updated 2026-09-25.
+Updated 2026-09-27.
 
 Entry points: `runtime/filesystem.js` (mounts and flush policy),
 `runtime/persistence-journal.js` (the per-file journal),
@@ -639,6 +639,62 @@ was 2.6 s of startup and is now 0.9 s.
 `size_t`, which is **32-bit under Wasm and 64-bit natively** — the same path
 hashes to different widths on the two platforms.
 
+## Mods
+
+The engine keeps upstream's mods: as it starts, `PresetMan::LoadAllDataModules` first
+unpacks every `.zip` in `Mods/` (`FindAndExtractZippedModules`, `System::ExtractZippedDataModule`:
+each file to `Mods/` plus its name in the zip, only the extensions in
+`System::s_SupportedExtensions`, then the zip is deleted), and then loads every
+`Name.rte` folder there that the Mod Manager has not turned off. `/Mods` is an IDBFS
+mount, so what is unpacked stays across reloads and new builds, like the saves.
+
+**Getting a mod in.** The strip's "Mods" opens a panel (`site/index.html`,
+[specs/mods.md](../specs/mods.md)). "Install a mod…" reads the chosen `.zip`'s central
+directory in the page; a zip without `Name.rte/Index.ini` at its top is refused, saying
+why (a mod inside another folder, an `index.ini` spelled otherwise, which the case-
+sensitive filesystem does not take for `Index.ini`, or none at all), since the engine
+would unpack it where it loads nothing. The page then writes the zip into the `/Mods` IndexedDB store itself,
+as IDBFS stores a file (`{timestamp, mode: 0o100666, contents}` in `FILE_DATA`,
+database version 21, the store and its `timestamp` index made as IDBFS makes them for a
+browser the game never ran in), named after the mods it holds (`SuperEarth.rte.zip`),
+and deletes any installed folder of the same name, so the new version's files are not
+mixed with the old's. "Remove" deletes a mod's keys (the folder and everything under it,
+or its zip). The game unpacks and loads the zip when it next starts.
+
+Writing the store behind the running game is safe because of the journal (below): it
+commits only paths the game itself changed and deletes nothing else, so a zip the page
+adds is not undone by the next flush, nor a removed mod written back, unless the game
+changes a file inside it. Stock IDBFS would do both: `syncfs(false)` makes the store
+match memory. Before the game starts there is nothing to race; while it runs (or after
+it failed), the panel offers "Restart the game", which waits for `Module.persistSaves`
+(up to 5 s) and reloads.
+
+**Versions.** The port is built from CCCP's development branch, which calls itself
+v7.0.0, and every mod on mod.io is made for v6 (`SupportedGameVersion = 6.2.2`).
+`DataModule::CheckSupportedGameVersion` asserted on the mismatch: a `confirm` at every
+start ("OK: Abort", the default, stopped the game). In the browser its three checks now
+print "WARNING: …" to the in-game console and the page's console instead
+(`RTEVersionAssert`, at the user's choice, [specs/mods.md](../specs/mods.md)).
+
+**Sounds.** A mod's sounds are not in `audio/manifest.tsv`, so the audio layer takes
+the path it takes for any unlisted file (`FMOD::System::createSound` reads the header,
+the first play reads the whole file from the filesystem, `runtime/fmod/playback.cpp`);
+`/Mods` is part of that filesystem.
+
+Checked with two mods from mod.io, both made for v6.2.2: The Helldivers
+(`superearthrte-bedd.zip`, 3.8 MB, 342 files, 36 FLAC sounds) and Jacen's Global Scripts
+(`jacenscriptsrte-8gxk.zip`, 22 KB). A zip that is not one, and one with its mod inside
+another folder, were refused. The Helldivers, installed before Play, unpacked (every file
+listed as extracted, the zip deleted), loaded (every INI read to "done ✓"), reached
+IndexedDB (342 keys, 36 of them FLAC) and showed in the Mod Manager as "SuperEarth.rte —
+Helldivers"; a Helldiver made from the Lua console with the AR-23 Liberator stood in the
+Tutorial; `AudioMan:PlaySound` of two of its weapons' sounds was heard by the page's
+audio tap (peaks 0.026 and 0.016, where the stock grapple gun's gave 0.001 and a
+missing file printed "Failed to find audio file"). Jacen's Global Scripts, installed
+while the game ran, loaded after "Restart the game", beside the first. The `mods` check
+installs a small mod made for v6.2.2 from the panel, and fails on a dialog, a missing
+warning, or anything left in `/Mods` after "Remove"; without the engine change it fails.
+
 ## Screenshots and dumps
 
 `System::s_ScreenshotDirectory` is `ScreenShots/`, relative to the working
@@ -654,8 +710,11 @@ That is also how the native/browser image comparisons are collected; see
 
 ## Known gaps
 
-- Loading a mod from the mounted `/Mods` directory has never been exercised.
-- Quota behaviour when saves plus mods exceed the browser's limit is unknown.
+- Quota behaviour when saves plus mods exceed the browser's limit is unknown. A mod is
+  held twice in memory for one start (its zip and what is unpacked from it), and every
+  mod stays in memory as long as the game runs, as IDBFS keeps a mount's files.
+- Mods tagged "Overwrites files" on mod.io, which change the game's own modules, are
+  untried; the port's `Data/` is packaged at build time and read-only in practice.
 - There is no incremental or lazy asset loading; the whole 51.6 MB package loads
   before the menu appears, and any change to `Data` makes every returning player
   download all of it again.
