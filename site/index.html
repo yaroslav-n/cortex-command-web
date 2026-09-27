@@ -28,7 +28,7 @@ button{background:#eac557;color:#17130a;border:0;padding:14px 32px;border-radius
 #mods-panel{position:fixed;right:16px;bottom:58px;z-index:5;width:380px;max-width:calc(100vw - 32px);box-sizing:border-box;padding:14px 16px;background:#111318;border:1px solid #333;border-radius:6px;box-shadow:0 8px 24px rgb(0 0 0 / .6);color:#ccc;font-size:13px}
 #mods-panel h2{margin:0 0 6px;font-size:15px;font-weight:600;color:#eac557}#mods-panel p{margin:6px 0;max-width:none;font-size:13px;color:#aaa}#mods-panel a{color:#eac557}
 #mod-list{list-style:none;margin:10px 0;padding:0;max-height:40vh;overflow:auto}#mod-list li{display:flex;align-items:center;gap:10px;padding:6px 0;border-top:1px solid #23262d}
-#mod-list .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ddd}#mod-list small{display:block;color:#777}#mod-list .none{color:#777}
+#mod-list .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#ddd}#mod-list small{display:block;white-space:normal;color:#777}#mod-list .none{color:#777}
 #mods-panel button{margin:0;padding:6px 12px;font-size:13px;cursor:pointer}#mods-panel button.quiet{background:#2a2d35;color:#ddd}#mods-panel button:disabled{cursor:default}
 #mods-panel .actions{display:flex;gap:8px;margin-top:10px}#mod-message:empty{display:none}#mod-message.error{color:#ffb9b9}
 </style></head><body data-state="checking">
@@ -38,7 +38,7 @@ button{background:#eac557;color:#17130a;border:0;padding:14px 32px;border-radius
 </div>
 <div id="bar">
 <span id="fullscreen-hint">Open fullscreen by pressing <kbd>Ctrl</kbd> + <kbd>F</kbd></span>
-<div id="links"><button id="mods" type="button" aria-expanded="false" aria-controls="mods-panel"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.878.392a1.75 1.75 0 0 0-1.756 0l-5.25 3.045A1.75 1.75 0 0 0 1 4.951v6.098c0 .624.332 1.2.872 1.514l5.25 3.045a1.75 1.75 0 0 0 1.756 0l5.25-3.045c.54-.313.872-.89.872-1.514V4.951c0-.624-.332-1.2-.872-1.514ZM7.875 1.69a.25.25 0 0 1 .25 0l4.63 2.685L8 7.133 3.245 4.375ZM2.5 5.677v5.372c0 .09.047.171.125.216l4.625 2.683V8.432Zm6.25 8.271 4.625-2.683a.25.25 0 0 0 .125-.216V5.677L8.75 8.432Z"/></svg><span>Mods</span></button><span class="bullet" aria-hidden="true">•</span><a id="repo"href="https://github.com/yaroslav-n/cortex-command-web" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path id="github-mark" fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>Cortex Command Web</span></a><span class="bullet" aria-hidden="true">•</span><a id="upstream" href="https://github.com/cortex-command-community/Cortex-Command-Community-Project" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#github-mark"/></svg><span>Cortex Command Community Project</span></a><span class="bullet" aria-hidden="true">•</span><a id="report-bug" href="https://github.com/yaroslav-n/cortex-command-web/issues/new" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M11 10h3V9h-3V8l3.17-1.03-.34-.94L11 7V6c0-.55-.45-1-1-1V4c0-.48-.36-.88-.83-.97L10.2 2H12V1H9.8l-2 2h-.59L5.2 1H3v1h1.8l1.03 1.03C5.36 3.12 5 3.51 5 4v1c-.55 0-1 .45-1 1v1l-2.83-.97-.34.94L4 8v1H1v1h3v1L.83 12.03l.34.94L4 12v1c0 .55.45 1 1 1h1l1-1V6h1v7l1 1h1c.55 0 1-.45 1-1v-1l2.83.97.34-.94L11 11v-1zM9 5H6V4h3v1z"/></svg><span>Submit a bug</span></a></div>
+<div id="links"><button id="mods" type="button" aria-expanded="false" aria-controls="mods-panel"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8.878.392a1.75 1.75 0 0 0-1.756 0l-5.25 3.045A1.75 1.75 0 0 0 1 4.951v6.098c0 .624.332 1.2.872 1.514l5.25 3.045a1.75 1.75 0 0 0 1.756 0l5.25-3.045c.54-.313.872-.89.872-1.514V4.951c0-.624-.332-1.2-.872-1.514ZM7.875 1.69a.25.25 0 0 1 .25 0l4.63 2.685L8 7.133 3.245 4.375ZM2.5 5.677v5.372c0 .09.047.171.125.216l4.625 2.683V8.432Zm6.25 8.271 4.625-2.683a.25.25 0 0 0 .125-.216V5.677L8.75 8.432Z"/></svg><span>Manage Mods</span></button><span class="bullet" aria-hidden="true">•</span><a id="repo"href="https://github.com/yaroslav-n/cortex-command-web" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path id="github-mark" fill-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span>Cortex Command Web</span></a><span class="bullet" aria-hidden="true">•</span><a id="upstream" href="https://github.com/cortex-command-community/Cortex-Command-Community-Project" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#github-mark"/></svg><span>Cortex Command Community Project</span></a><span class="bullet" aria-hidden="true">•</span><a id="report-bug" href="https://github.com/yaroslav-n/cortex-command-web/issues/new" target="_blank" rel="noopener"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M11 10h3V9h-3V8l3.17-1.03-.34-.94L11 7V6c0-.55-.45-1-1-1V4c0-.48-.36-.88-.83-.97L10.2 2H12V1H9.8l-2 2h-.59L5.2 1H3v1h1.8l1.03 1.03C5.36 3.12 5 3.51 5 4v1c-.55 0-1 .45-1 1v1l-2.83-.97-.34.94L4 8v1H1v1h3v1L.83 12.03l.34.94L4 12v1c0 .55.45 1 1 1h1l1-1V6h1v7l1 1h1c.55 0 1-.45 1-1v-1l2.83.97.34-.94L11 11v-1zM9 5H6V4h3v1z"/></svg><span>Submit a bug</span></a></div>
 </div>
 <div id="mods-panel" role="dialog" aria-labelledby="mods-title" hidden>
 <h2 id="mods-title">Mods</h2>
@@ -485,7 +485,7 @@ window.addEventListener('keydown', (event) => {
   if (!event.repeat) game.requestFullscreen().catch(() => {});
 }, true);
 
-// Mods, from the strip's "Mods" (specs/mods.md). As it starts, the engine unpacks each .zip
+// Mods, from the strip's "Manage Mods" (specs/mods.md). As it starts, the engine unpacks each .zip
 // in /Mods (PresetMan::FindAndExtractZippedModules) and loads every Name.rte folder there
 // that its Mod Manager has not turned off. The page puts a mod's .zip into, and takes a mod
 // out of, the IndexedDB store where IDBFS keeps /Mods (runtime/filesystem.js). It writes the
@@ -497,6 +497,7 @@ const MODS = '/Mods';
 const MODS_STORE = 'FILE_DATA'; // IDBFS.DB_STORE_NAME
 const IDBFS_VERSION = 21; // IDBFS.DB_VERSION (Emscripten's libidbfs.js); opening with another fails
 const FILE_MODE = 0o100666; // what IDBFS stores for a file the game wrote
+const GAME_VERSION = '@CORTEX_GAME_VERSION@'; // c_VersionString, which CMake puts in
 
 const whenDone = (request) => new Promise((resolve, reject) => {
   request.onsuccess = request.oncomplete = () => resolve(request.result);
@@ -513,16 +514,46 @@ function openMods() {
   return whenDone(request);
 }
 
-// What /Mods holds: mods (Name.rte folders), and .zip files the game has yet to unpack.
+// Whether the game loads a mod made for the version its Index.ini states without a warning,
+// as DataModule::CheckSupportedGameVersion decides: the same version, or the same major one
+// and no later a minor one; never with a pre-release or build (7.0.0-rc.1, 7.0.0+1) on
+// either side. The engine then only says so in the browser's console (specs/mods.md), so the
+// panel says it under the mod.
+function versionNote(indexIni) {
+  const stated = /^\s*SupportedGameVersion\s*=\s*([^\s/]+)/m.exec(indexIni)?.[1];
+  if (!stated) return `Names no game version it was made for; this game is v${GAME_VERSION} and may not support it.`;
+  const [mod, game] = [stated, GAME_VERSION].map((version) => /^(\d+)\.(\d+)\.\d+$/.exec(version));
+  const supported = stated === GAME_VERSION || (mod && game && mod[1] === game[1] && Number(mod[2]) <= Number(game[2]));
+  return supported ? '' : `Made for v${stated}; this game is v${GAME_VERSION} and may not support it.`;
+}
+
+// What /Mods holds: mods (Name.rte folders) and .zip files the game has yet to unpack, each
+// with its notes: that it is yet to be unpacked, and if it was made for another version.
 async function listMods() {
   const db = await openMods();
+  let found;
   try {
-    const keys = await whenDone(db.transaction(MODS_STORE).objectStore(MODS_STORE).getAllKeys());
-    const names = new Set(keys.map((key) => String(key).slice(MODS.length + 1).split('/')[0]).filter((name) => /\.(rte|zip)$/.test(name)));
-    return [...names].sort((a, b) => a.localeCompare(b));
+    const store = db.transaction(MODS_STORE).objectStore(MODS_STORE);
+    const keys = await whenDone(store.getAllKeys());
+    const names = [...new Set(keys.map((key) => String(key).slice(MODS.length + 1).split('/')[0]).filter((name) => /\.(rte|zip)$/.test(name)))];
+    // A mod's Index.ini, or the whole of a zip not yet unpacked.
+    found = await Promise.all(names.sort((a, b) => a.localeCompare(b)).map(async (name) =>
+      ({ name, contents: (await whenDone(store.get(`${MODS}/${name}${name.endsWith('.zip') ? '' : '/Index.ini'}`)))?.contents })));
   } finally {
     db.close();
   }
+  const text = (bytes) => new TextDecoder().decode(bytes);
+  return Promise.all(found.map(async ({ name, contents }) => {
+    if (!name.endsWith('.zip')) return { name, notes: contents ? [versionNote(text(contents))].filter(Boolean) : [] };
+    const notes = ['unpacked when the game starts'];
+    const indexes = (contents && zipEntries(contents) || []).filter((entry) => /^[^/]+\.rte\/Index\.ini$/.test(entry.name));
+    for (const index of indexes) {
+      const bytes = await zipFile(contents, index).catch(() => null);
+      const note = bytes && versionNote(text(bytes));
+      if (note) notes.push(indexes.length > 1 ? `${index.name.split('/')[0]}: ${note}` : note);
+    }
+    return { name, notes };
+  }));
 }
 
 async function changeMods(change) {
@@ -541,31 +572,43 @@ const removeFromStore = (store, path) => {
   store.delete(IDBKeyRange.bound(path + '/', path + '/\uffff'));
 };
 
-// The names of the files in a zip, from its central directory, or null if it is not a zip
-// the page can read (the engine's minizip reads the same directory).
-function zipNames(bytes) {
+// The files in a zip, from its central directory: each one's name, how it is compressed, its
+// size in the zip and where its local header is; or null if it is not a zip the page can read
+// (the engine's minizip reads the same directory).
+function zipEntries(bytes) {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const decoder = new TextDecoder();
   // The end record is 22 bytes, after the directory, and may be followed by a comment.
   for (let end = bytes.length - 22; end >= 0 && end >= bytes.length - 22 - 0xffff; end--) {
     if (view.getUint32(end, true) !== 0x06054b50) continue;
-    const names = [];
+    const entries = [];
     for (let entry = 0, at = view.getUint32(end + 16, true); entry < view.getUint16(end + 10, true); entry++) {
       if (at + 46 > end || view.getUint32(at, true) !== 0x02014b50) return null;
       const length = view.getUint16(at + 28, true);
-      names.push(decoder.decode(bytes.subarray(at + 46, at + 46 + length)));
+      entries.push({ name: decoder.decode(bytes.subarray(at + 46, at + 46 + length)), method: view.getUint16(at + 10, true),
+        size: view.getUint32(at + 20, true), header: view.getUint32(at + 42, true) });
       at += 46 + length + view.getUint16(at + 30, true) + view.getUint16(at + 32, true);
     }
-    return names;
+    return entries;
   }
   return null;
+}
+
+// One file of a zip, stored or deflated, as mods are.
+async function zipFile(bytes, entry) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const start = entry.header + 30 + view.getUint16(entry.header + 26, true) + view.getUint16(entry.header + 28, true);
+  const data = bytes.subarray(start, start + entry.size);
+  if (entry.method === 0) return data;
+  if (entry.method !== 8) throw new Error(`${entry.name} is compressed in a way the page cannot read`);
+  return new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer());
 }
 
 // Puts a mod's .zip into /Mods and returns the mods (Name.rte) it holds. A mod of the same
 // name is replaced: its files go, so none of the old version's are left beside the new.
 async function installMod(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const names = zipNames(bytes);
+  const names = zipEntries(bytes)?.map((entry) => entry.name);
   if (!names) throw new Error(`${file.name} is not a zip file.`);
   // The engine unpacks each file to Mods/ plus its name in the zip, and loads Name.rte/Index.ini.
   const mods = [...new Set(names.map((name) => /^([^/]+\.rte)\/Index\.ini$/.exec(name)?.[1]).filter(Boolean))];
@@ -609,7 +652,7 @@ async function showModList() {
     tellMods(`Could not read the installed mods: ${error.message || error}`, true);
     return;
   }
-  modList.replaceChildren(...mods.map((mod) => {
+  modList.replaceChildren(...mods.map(({ name: mod, notes }) => {
     const item = document.createElement('li');
     const name = document.createElement('span');
     name.className = 'name';
@@ -622,9 +665,9 @@ async function showModList() {
       await changeMods((store) => removeFromStore(store, `${MODS}/${mod}`));
       return `Removed ${mod.replace(/\.zip$/, '')}.` + (gameStarted() ? ' The game goes on without it the next time it starts.' : '');
     });
-    if (mod.endsWith('.zip')) {
+    for (const text of notes) {
       const note = document.createElement('small');
-      note.textContent = 'unpacked when the game starts';
+      note.textContent = text;
       name.append(note);
     }
     item.append(name, remove);
@@ -662,7 +705,7 @@ function showMods(open) {
   }
 }
 
-// A click on "Mods" leaves the keyboard with the game, and keys typed in the panel are the
+// A click on "Manage Mods" leaves the keyboard with the game, and keys typed in the panel are the
 // panel's alone: SDL listens for keys on the window, and would take them too.
 modsButton.addEventListener('mousedown', (event) => event.preventDefault());
 modsButton.onclick = () => showMods(modsPanel.hidden);

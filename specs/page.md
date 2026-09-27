@@ -5,7 +5,7 @@
 - Under the game, a strip:
   - on the left, "Open fullscreen by pressing Ctrl + F", and Ctrl+F does open
     fullscreen;
-  - on the right, "Mods" (package icon), which opens the mods panel
+  - on the right, "Manage Mods" (package icon), which opens the mods panel
     ([mods](mods.md)), then three links, all separated by bullets, each with an icon
     and a faint underline: "Cortex Command Web" (GitHub icon) to
     https://github.com/yaroslav-n/cortex-command-web, "Cortex Command Community

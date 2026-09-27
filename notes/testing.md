@@ -30,7 +30,7 @@ network, and a little over a minute the checks that break the game's own downloa
   must print exactly `tests/golden/`. The random contract's golden is also what the
   original's own generator (libstdc++, built with g++-13) prints;
 - **the game** — its start screen fetches none of it until asked and offers "Play
-  Game", and shows the strip under the game ("Mods", the credit and its two GitHub
+  Game", and shows the strip under the game ("Manage Mods", the credit and its two GitHub
   links, the bug link and the Ctrl+F note), with the game's area 50 px shorter than the
   window; Ctrl+F, sent as key events, must then put the game's area in fullscreen
   (`start-screen`); a browser without JSPI is told so and fetches nothing

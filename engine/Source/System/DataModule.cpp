@@ -5,7 +5,6 @@
 #include "GameVersion.h"
 #include "System.h"
 #ifdef __EMSCRIPTEN__
-#include "ConsoleMan.h"
 #include <cstdio>
 #endif
 
@@ -496,15 +495,13 @@ bool DataModule::AddToTypeMap(Entity* entityToAdd) {
 }
 
 #ifdef __EMSCRIPTEN__
-// A mod made for another version of the game loads with a warning in the consoles, not an
-// assertion (specs/mods.md). Every published mod is made for v6, the released game, and this
-// development build calls itself v7, so the assertion came at every start, and its default
-// stopped the game.
+// A mod made for another version of the game loads with a warning in the browser's console,
+// not an assertion; the page's Mods panel says so under the mod (specs/mods.md). Every
+// published mod is made for v6, the released game, and this development build calls itself
+// v7, so the assertion came at every start, and its default stopped the game.
 #define RTEVersionAssert(expression, description) \
 	if (!(expression)) { \
-		const std::string warning = "WARNING: " + (description); \
-		g_ConsoleMan.PrintString(warning); \
-		std::fprintf(stderr, "%s\n", warning.c_str()); \
+		std::fprintf(stderr, "WARNING: %s\n", std::string(description).c_str()); \
 	}
 #else
 #define RTEVersionAssert(expression, description) RTEAssert(expression, description)
