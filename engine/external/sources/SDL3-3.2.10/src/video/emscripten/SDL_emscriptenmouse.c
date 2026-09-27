@@ -197,6 +197,13 @@ static bool Emscripten_SetRelativeMouseMode(bool enabled)
             return true;
         }
     } else {
+        // The lock this lets go is SDL's doing, not the browser's taking it for an Esc.
+        for (window = SDL_GetVideoDevice()->windows; window; window = window->next) {
+            window_data = window->internal;
+            if (window_data->has_pointer_lock) {
+                window_data->pointer_lock_exit_requested = true;
+            }
+        }
         if (emscripten_exit_pointerlock() >= EMSCRIPTEN_RESULT_SUCCESS) {
             return true;
         }

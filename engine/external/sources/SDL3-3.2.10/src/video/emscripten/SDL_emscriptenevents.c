@@ -260,11 +260,47 @@ static SDL_Scancode Emscripten_MapScanCode(const char *code)
     return SDL_SCANCODE_UNKNOWN;
 }
 
+/* The browser keeps from the page the Esc that lets the pointer lock go (and leaves
+   fullscreen). In play, where the game holds the lock, the first Esc therefore only freed
+   the cursor, and it took a second one to reach the game's pause menu. So when the lock
+   goes while the window still wants it, and the page keeps the keyboard focus, the game
+   gets the Esc the browser kept. The lock also goes when the page loses the focus to
+   another tab or app, which is no Esc; the blur can come just after the lock's change,
+   so the Esc waits a moment, and a blur, a hidden page, or an Esc the page did receive
+   (a browser that passes the key on) calls it off. */
+#define KEPT_ESCAPE_DELAY_NS SDL_MS_TO_NS(100)
+
+void Emscripten_SendKeptEscape(SDL_VideoDevice *_this)
+{
+    SDL_Window *window;
+    for (window = _this->windows; window; window = window->next) {
+        SDL_WindowData *window_data = window->internal;
+        if (window_data->pointer_lock_lost_ns == 0 || SDL_GetTicksNS() - window_data->pointer_lock_lost_ns < KEPT_ESCAPE_DELAY_NS) {
+            continue;
+        }
+        window_data->pointer_lock_lost_ns = 0;
+        if (!window_data->has_pointer_lock && (window->flags & SDL_WINDOW_MOUSE_RELATIVE_MODE) && SDL_GetKeyboardFocus() == window) {
+            SDL_SendKeyboardKey(0, SDL_DEFAULT_KEYBOARD_ID, 0, SDL_SCANCODE_ESCAPE, true);
+            SDL_SendKeyboardKey(0, SDL_DEFAULT_KEYBOARD_ID, 0, SDL_SCANCODE_ESCAPE, false);
+            window_data->kept_escape_sent = true;
+        }
+    }
+}
+
 static EM_BOOL Emscripten_HandlePointerLockChange(int eventType, const EmscriptenPointerlockChangeEvent *changeEvent, void *userData)
 {
     SDL_WindowData *window_data = (SDL_WindowData *)userData;
+    const bool lost = window_data->has_pointer_lock && !changeEvent->isActive;
+    const bool asked = window_data->pointer_lock_exit_requested;
+    const Uint64 now = SDL_GetTicksNS();
     // keep track of lock losses, so we can regrab if/when appropriate.
     window_data->has_pointer_lock = changeEvent->isActive;
+    window_data->pointer_lock_exit_requested = false;
+    window_data->pointer_lock_lost_ns = 0;
+    if (lost && !asked && (window_data->window->flags & SDL_WINDOW_MOUSE_RELATIVE_MODE) && SDL_GetKeyboardFocus() == window_data->window &&
+        !(window_data->escape_down_ns != 0 && now - window_data->escape_down_ns < KEPT_ESCAPE_DELAY_NS)) {
+        window_data->pointer_lock_lost_ns = now;
+    }
     return 0;
 }
 
@@ -425,6 +461,7 @@ static EM_BOOL Emscripten_HandleFocus(int eventType, const EmscriptenFocusEvent 
      * via Alt+Tab), key release events won't be received. */
     if (eventType == EMSCRIPTEN_EVENT_BLUR) {
         SDL_ResetKeyboard();
+        window_data->pointer_lock_lost_ns = 0; // the lock went with the focus, not to an Esc
     }
 
     sdl_event_type = (eventType == EMSCRIPTEN_EVENT_FOCUS) ? SDL_EVENT_WINDOW_FOCUS_GAINED : SDL_EVENT_WINDOW_FOCUS_LOST;
@@ -548,6 +585,23 @@ static EM_BOOL Emscripten_HandleKey(int eventType, const EmscriptenKeyboardEvent
             scancode = SDL_SCANCODE_AC_FORWARD;
         } else if (SDL_strcmp(keyEvent->key, "SoftRight") == 0) {
             scancode = SDL_SCANCODE_AC_BACK;
+        }
+    }
+
+    if (scancode == SDL_SCANCODE_ESCAPE) {
+        if (eventType == EMSCRIPTEN_EVENT_KEYDOWN && keyEvent->repeat && window_data->kept_escape_sent) {
+            /* The kept Esc, held until it repeats: the browser keeps only its first keydown.
+               The game had that press, and SDL, which never saw the key go down, would take
+               the first repeat for another. */
+            return true;
+        }
+        if (!keyEvent->repeat) {
+            window_data->kept_escape_sent = false;
+        }
+        if (eventType == EMSCRIPTEN_EVENT_KEYDOWN) {
+            // This Esc reached the page: a pointer lock it let go needs no other.
+            window_data->escape_down_ns = SDL_GetTicksNS();
+            window_data->pointer_lock_lost_ns = 0;
         }
     }
 
@@ -677,6 +731,9 @@ Emscripten_HandleCanvasResize(int eventType, const void *reserved, void *userDat
 static EM_BOOL Emscripten_HandleVisibilityChange(int eventType, const EmscriptenVisibilityChangeEvent *visEvent, void *userData)
 {
     SDL_WindowData *window_data = userData;
+    if (visEvent->hidden) {
+        window_data->pointer_lock_lost_ns = 0; // the lock went with the page, not to an Esc
+    }
     SDL_SendWindowEvent(window_data->window, visEvent->hidden ? SDL_EVENT_WINDOW_HIDDEN : SDL_EVENT_WINDOW_SHOWN, 0, 0);
     return 0;
 }

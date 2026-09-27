@@ -24,7 +24,8 @@ network, and a little over a minute the checks that break the game's own downloa
   `worklet-probe.html?auto` starts the raw device and `ma_engine` itself and checks
   the sine's peak (0.25) and that the graph advances; `relative-mouse-check` keeps
   SDL's relative mode (the game's aiming) through a pointer lock lost to another tab
-  or app (see [input](input.md));
+  or app, and gives the game the Esc the browser keeps when it takes the lock (see
+  [input](input.md));
 - **golden outputs** — `random_contract` and `float_contract` run under Node and
   must print exactly `tests/golden/`. The random contract's golden is also what the
   original's own generator (libstdc++, built with g++-13) prints;

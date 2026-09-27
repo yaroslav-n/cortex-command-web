@@ -6,7 +6,10 @@
 //
 // The page's events are made here (EM_ASM), so the browser grants no real lock: the page
 // stands in for it, counting the requests SDL makes and granting the user activation that
-// Emscripten asks of a request.
+// Emscripten asks of a request, and says when the lock is taken and lost.
+//
+// The browser also keeps from the page the Esc that lets the lock go; SDL must give it to
+// the game all the same, so that one Esc in play opens the pause menu.
 #include <SDL3/SDL.h>
 #include <emscripten.h>
 #include <cstdio>
@@ -35,6 +38,31 @@ static int TakeMotion(float& xrel, float& yrel) {
 	return motions;
 }
 
+// The Esc presses waiting (not their repeats); each must be let go too.
+static int TakeEscapes() {
+	int presses = 0;
+	int releases = 0;
+	SDL_Event event;
+	while (SDL_PollEvent(&event)) {
+		if (event.type == SDL_EVENT_KEY_DOWN && event.key.scancode == SDL_SCANCODE_ESCAPE && !event.key.repeat) {
+			++presses;
+		} else if (event.type == SDL_EVENT_KEY_UP && event.key.scancode == SDL_SCANCODE_ESCAPE) {
+			++releases;
+		}
+	}
+	if (presses != releases) {
+		check(false, "every Esc pressed is let go");
+	}
+	return presses;
+}
+
+// Longer than SDL waits for a blur after a lost lock.
+static void PassEscapeDelay() {
+	const Uint64 start = SDL_GetTicksNS();
+	while (SDL_GetTicksNS() - start < SDL_MS_TO_NS(150)) {
+	}
+}
+
 static int LockRequests() {
 	return EM_ASM_INT({ return window.lockRequests; });
 }
@@ -48,6 +76,14 @@ int main(int, char**) {
 			const box = Module.canvas.getBoundingClientRect();
 			Module.canvas.dispatchEvent(new MouseEvent(type, Object.assign({ bubbles: true, cancelable: true, clientX: box.left + x, clientY: box.top + y }, extra)));
 		};
+		window.lockedElement = null;
+		Object.defineProperty(document, 'pointerLockElement', { configurable: true, get: () => window.lockedElement });
+		document.exitPointerLock = () => {};
+		window.lock = (on) => { window.lockedElement = on ? Module.canvas : null; document.dispatchEvent(new Event('pointerlockchange')); };
+		window.key = (type, repeat) => window.dispatchEvent(new KeyboardEvent(type, { key: 'Escape', code: 'Escape', keyCode: 27, repeat: !!repeat, bubbles: true, cancelable: true }));
+		window.pageHidden = false;
+		Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.pageHidden });
+		window.visibility = (hidden) => { window.pageHidden = hidden; document.dispatchEvent(new Event('visibilitychange')); };
 	});
 	check(SDL_Init(SDL_INIT_VIDEO), "SDL starts");
 	SDL_Window* window = SDL_CreateWindow("Relative mouse", 320, 200, 0);
@@ -76,6 +112,55 @@ int main(int, char**) {
 	const int requestsBeforeClick = LockRequests();
 	EM_ASM({ pointer('mousedown', 80, 75, { button: 0, buttons: 1 }); pointer('mouseup', 80, 75, { button: 0, buttons: 0 }); });
 	check(LockRequests() > requestsBeforeClick, "a click asks for the pointer lock again");
+	TakeMotion(xrel, yrel);
+
+	// The browser keeps from the page the Esc that lets the lock go. The game must get it all
+	// the same, so that one Esc opens its pause menu, as natively, and not only frees the cursor.
+	EM_ASM({ lock(true); lock(false); });
+	check(TakeEscapes() == 0, "the Esc waits a moment for a blur after the lock goes");
+	PassEscapeDelay();
+	check(TakeEscapes() == 1, "a lock the browser takes while the page keeps the focus gives the game an Esc");
+	PassEscapeDelay();
+	check(TakeEscapes() == 0, "and only one");
+	// Held on, the key repeats, and the browser passes the repeats and the release to the page.
+	EM_ASM({ key('keydown', true); key('keydown', true); key('keyup'); });
+	check(TakeEscapes() == 0, "the repeats of an Esc the browser kept are not another press");
+	EM_ASM({ key('keydown'); key('keydown', true); key('keyup'); });
+	check(TakeEscapes() == 1, "the next Esc is a press again");
+
+	// The page loses the focus, and the lock with it, in either order: no Esc.
+	EM_ASM({ lock(true); lock(false); window.dispatchEvent(new FocusEvent('blur')); });
+	PassEscapeDelay();
+	check(TakeEscapes() == 0, "a lock lost to another tab or app gives no Esc (the blur after the lock)");
+	EM_ASM({ window.dispatchEvent(new FocusEvent('focus')); lock(true); window.dispatchEvent(new FocusEvent('blur')); lock(false); window.dispatchEvent(new FocusEvent('focus')); });
+	PassEscapeDelay();
+	check(TakeEscapes() == 0, "a lock lost to another tab or app gives no Esc (the blur before the lock)");
+	EM_ASM({ lock(true); lock(false); visibility(true); });
+	PassEscapeDelay();
+	check(TakeEscapes() == 0, "a lock lost with the page hidden gives no Esc");
+	EM_ASM({ visibility(false); });
+
+	// An Esc the page did receive is the only one.
+	EM_ASM({ lock(true); lock(false); key('keydown'); key('keyup'); });
+	PassEscapeDelay();
+	check(TakeEscapes() == 1, "an Esc that reaches the page is not doubled (the Esc after the lock)");
+	EM_ASM({ lock(true); key('keydown'); lock(false); key('keyup'); });
+	PassEscapeDelay();
+	check(TakeEscapes() == 1, "an Esc that reaches the page is not doubled (the Esc before the lock)");
+
+	// The game lets the lock go itself, as when its pause menu opens: no Esc, even when it takes
+	// relative mode again before the lock's change arrives, as a picker closing does.
+	EM_ASM({ lock(true); });
+	check(SDL_SetWindowRelativeMouseMode(window, false), "the window leaves relative mode");
+	EM_ASM({ lock(false); });
+	PassEscapeDelay();
+	check(TakeEscapes() == 0, "a lock the game lets go gives no Esc");
+	check(SDL_SetWindowRelativeMouseMode(window, true), "the window goes into relative mode again");
+	EM_ASM({ lock(true); });
+	check(SDL_SetWindowRelativeMouseMode(window, false) && SDL_SetWindowRelativeMouseMode(window, true), "the window leaves relative mode and takes it again");
+	EM_ASM({ lock(false); });
+	PassEscapeDelay();
+	check(TakeEscapes() == 0, "a lock the game lets go gives no Esc, though it wants the lock again");
 
 	SDL_DestroyWindow(window);
 	SDL_Quit();
