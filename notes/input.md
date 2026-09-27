@@ -1,6 +1,6 @@
 # Input
 
-Updated 2026-09-24.
+Updated 2026-09-27.
 
 Entry points: `engine/Source/Main.cpp` (`PollSDLEvents`, `EndInputFrame`),
 `engine/Source/System/BrowserInputEventQueue.h`,
@@ -209,6 +209,28 @@ used to keep the aim frozen afterwards, while clicks still worked, all of them f
   lie outside the window (it was 64 px left of it), so it waited forever. In the
   browser `DisableMouseMoving(false)` takes motion again at once.
 
+**Esc under the lock.** The browser keeps from the page the Esc that lets the lock go;
+in fullscreen the same Esc also leaves fullscreen. In play the first Esc therefore
+only freed the cursor, and the pause menu took a second one. SDL now gives the game
+that Esc (`Emscripten_SendKeptEscape`, from `Emscripten_PumpEvents`): when the lock
+goes while the window is still relative, SDL did not let it go itself
+(`pointer_lock_exit_requested`, set by `Emscripten_SetRelativeMouseMode` when it exits
+a held lock) and the page keeps the keyboard focus, an Esc press and release follow
+100 ms later. The lock also goes when the page loses the focus, which is no Esc and
+upstream does not pause for; the blur can come just after the lock's change, hence the
+wait. A blur, a hidden page, or an Esc the page does receive (a browser that passes
+the key on, or a test driver's key) calls it off, and a lock the game lets go, even
+one it asks for again before the change arrives (a picker closing), gives none.
+
+As Chromium's source reads, it keeps a key it acted on until the next keydown: the
+keyup of a tap, but not the repeats of a held key, nor the keyup after them. SDL,
+which never saw the kept Esc go down, would take its first repeat for another press
+and close the menu again, so such repeats are dropped until the page sees an Esc that
+is not one (`kept_escape_sent`).
+
+The Esc is the one the game would have had natively, so it does whatever Esc does
+there: the pause menu in play and in the editors, closing the console.
+
 Reproduced and checked in headless Chrome with a real lock, in Dummy Assault: take
 the lock with a click, drop it and blur the page (`document.exitPointerLock()`, a
 `mouseleave` on the canvas and a `blur` on the window), give the focus back, move and
@@ -216,7 +238,13 @@ click; the pie menu (held on Left Alt) then follows the mouse and the click gets
 lock back, where before neither happened. `relative-mouse` (`tests/relative_mouse_contract.cpp`)
 checks the SDL half with synthetic events, `gui-input` the `UInputMan` half; each
 fails without its fix. Chrome's own Esc, which a headless browser does not have, was
-not tried.
+not tried. For the Esc under the lock, `relative-mouse` also takes a lock and loses it
+as the browser would: an Esc arrives, one, and none when a blur follows or precedes
+the loss, when the page is hidden, when the page gets the Esc itself (either side of
+the loss), or when the game lets the lock go, even wanting it back at once; and the
+kept Esc's repeats are no press. Without the fix the first of these fails, without
+`pointer_lock_exit_requested` the one wanting the lock back, and without
+`kept_escape_sent` the repeats.
 
 ## Focus loss
 
@@ -251,6 +279,8 @@ character reach the Lua console intact.
 
 - **Pointer lock** — checked in headless Chrome with a real lock and synthetic focus
   changes; Chrome's own Esc and a real switch to another app have not been tried.
+  Whether Chrome's blur can come more than 100 ms after the lock's change when the
+  page loses the focus (it would then pause the game) is not known.
 - **Physical gamepads** — `Base.rte/gamecontrollerdb.txt` is loaded at startup
   and the packet format carries analog axes, but no physical pad has been used.
 - **Save-name prefix loss** — a saved name once appeared to be missing its first

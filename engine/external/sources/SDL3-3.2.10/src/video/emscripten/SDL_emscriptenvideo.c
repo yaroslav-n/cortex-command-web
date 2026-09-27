@@ -272,6 +272,7 @@ static void Emscripten_PumpEvents(SDL_VideoDevice *_this)
             pending_swap_interval = -1;
         }
     }
+    Emscripten_SendKeptEscape(_this);
 }
 
 EMSCRIPTEN_KEEPALIVE void requestFullscreenThroughSDL(SDL_Window *window)

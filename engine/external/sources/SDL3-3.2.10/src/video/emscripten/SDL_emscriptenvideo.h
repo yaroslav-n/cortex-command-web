@@ -45,6 +45,10 @@ struct SDL_WindowData
     bool fullscreen_resize;
 
     bool has_pointer_lock;
+    bool pointer_lock_exit_requested; // SDL itself let the lock go
+    Uint64 pointer_lock_lost_ns;      // when the browser took the lock from the window, to be answered with an Esc; 0 when none waits
+    Uint64 escape_down_ns;            // when the page last received Esc
+    bool kept_escape_sent;            // the game was given an Esc the browser kept, and the page has seen no Esc since
 
     bool mouse_focus_loss_pending;
 };
