@@ -1,6 +1,6 @@
 # Threads and browser scheduling
 
-Updated 2026-09-25.
+Updated 2026-09-27.
 
 Entry points: `engine/Source/Managers/ThreadMan.h` / `.cpp`,
 `engine/Source/System/System.h` (`BrowserCooperativeYield`),
@@ -386,7 +386,11 @@ reach the event loop (by any route: a pending timer and a pending message must n
 fire; the old wait took 95 ms for them and failed, the current one takes 2 ms),
 that an 80 ms wait lets page timers run, that stdout written by workers is
 serviced during a wait within about a millisecond, and the empty, deferred,
-exception and worker-side cases. `-simulate-tutorial` proves the simulation is
+exception and worker-side cases. The stdout check runs five rounds and judges the
+fastest against 12 ms: a wait that did not service the calls would take every round
+at least the 16 ms after which it returns to the event loop, while a busy machine
+only slows a round now and then (GitHub's shared runner took 13.7, 19.3 and 50 ms
+for a single round, failing CI on main three times). `-simulate-tutorial` proves the simulation is
 scheduling-independent across 3600 steps; its serial hashes did not change with
 any of the waiting changes above.
 
